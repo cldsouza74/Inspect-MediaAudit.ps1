@@ -147,12 +147,25 @@ param(
 # ─────────────────────────────────────────────────────────────────────────────
 function ConvertTo-LongPath {
     param([string]$Path)
-    if ($Path -like '\\?\\*') { return $Path }
+    # FIX: use StartsWith() instead of -like '\\?\\*'. In PowerShell's -like operator
+    # '?' is a single-character wildcard, so the original matched paths like '\\X\*'
+    # where X is any character — not just the literal extended-path prefix \\?\
+    if ($Path.StartsWith('\\?\')) { return $Path }
     $abs = [System.IO.Path]::GetFullPath($Path)
     if ($abs.Length -ge 240) { "\\?\$abs" } else { $abs }
 }
 
 $longPath = ConvertTo-LongPath $Path
+
+# Pre-flight: verify exiftool is on PATH before touching any files.
+# Without this, the script runs to completion but silently fails metadata
+# reads and writes on every file — exiftool errors are swallowed by catch {}.
+if (-not (Get-Command exiftool -ErrorAction SilentlyContinue)) {
+    Write-Host "❌ exiftool not found on PATH." -ForegroundColor Red
+    Write-Host "   Download from https://exiftool.org, place exiftool.exe in a PATH folder," -ForegroundColor Red
+    Write-Host "   then verify with: exiftool -ver" -ForegroundColor Red
+    exit 1
+}
 
 # All extensions that will be considered for processing (lowercased for comparison).
 # Files with any other extension are counted in $totalCount but skipped otherwise.
@@ -216,6 +229,13 @@ foreach ($file in $allFiles) {
 # reportInterval files (1% of total, minimum 100) to prevent console flooding
 # on large runs.
 # ─────────────────────────────────────────────────────────────────────────────
+# Guard against empty result — avoids division by zero inside the parallel block
+# ($index / $totalFiles) and prevents a confusing "0 files fixed" run.
+if ($filteredCount -eq 0) {
+    Write-Host "⚠️  No supported media files found in '$Path'. Nothing to do." -ForegroundColor Yellow
+    exit 0
+}
+
 $progressLock = [System.Threading.Mutex]::new()
 $reportInterval = [math]::Max(100, [math]::Round($filteredCount * 0.01))
 
@@ -305,7 +325,7 @@ $filesToProcess | ForEach-Object -Parallel {
                     'mif1'  { '.heic' }   # HEIF multi-image
                     'mp41'  { '.mp4'  }
                     'mp42'  { '.mp4'  }
-                    'qt  '  { '.mov'  }   # QuickTime (brand includes trailing spaces)
+                    'qt'    { '.mov'  }   # QuickTime — 'qt  ' trimmed (brand is 4 bytes, space-padded)
                     default { '.mp4'  }   # Treat unknown ISO brands as MP4
                 }
             }
@@ -316,18 +336,22 @@ $filesToProcess | ForEach-Object -Parallel {
         }
 
         # Read only the first 12 bytes — enough for all magic-number checks above.
-        # Use a try/catch so unreadable files (locked, zero-byte, etc.) are counted
-        # as failures and skipped rather than crashing the whole parallel run.
-        $bytes = [byte[]]::new(12)
+        # FIX: moved stream disposal into a finally block. Previously $stream.Close()
+        # was only called on the happy path — if Read() threw, the file handle leaked.
+        $bytes  = [byte[]]::new(12)
+        $stream = $null
+        $readOk = $false
         try {
             $stream = $fileInfo.OpenRead()
             $null = $stream.Read($bytes, 0, 12)
-            $stream.Close()
+            $readOk = $true
         } catch {
-            $actions += "❌ Read error: $($fileInfo.Name)"
+            $actions += "❌ Read error: $($fileInfo.Name) [$($_.Exception.Message)]"
             $null = $processedCount.AddOrUpdate('Failed', 1, { param($k, $v) $v + 1 })
-            return
+        } finally {
+            if ($stream) { $stream.Dispose() }
         }
+        if (-not $readOk) { return }
 
         $trueExt  = Get-TrueExtension $bytes
         $actualExt = $fileInfo.Extension.ToLower()
@@ -421,7 +445,20 @@ $filesToProcess | ForEach-Object -Parallel {
         if ($dateTaken)    { $candidateDates += $dateTaken }
         if ($mediaCreated) { $candidateDates += $mediaCreated }
         $candidateDates += $dateCreated, $dateModified
-        $oldestDate = ($candidateDates | Where-Object { $_ -is [datetime] } | Sort-Object)[0]
+        # FIX: Apply sanity bounds before selecting the oldest date. Corrupt EXIF data
+        # can produce years like 0001 or 9999 which would otherwise become the canonical
+        # "oldest" and generate nonsensical filenames (e.g. 00010101_000000.jpg).
+        # Lower bound: 1970-01-01 (no consumer digital cameras existed before this).
+        # Upper bound: tomorrow (guards against cameras with incorrect future dates).
+        # If every candidate falls outside the bounds, fall back to the raw oldest
+        # and log a warning so the anomaly is visible in the progress output.
+        $minSaneDate = [datetime]::new(1970, 1, 1)
+        $maxSaneDate = (Get-Date).AddDays(1)
+        $oldestDate  = ($candidateDates | Where-Object { $_ -is [datetime] -and $_ -ge $minSaneDate -and $_ -le $maxSaneDate } | Sort-Object)[0]
+        if (-not $oldestDate) {
+            $oldestDate = ($candidateDates | Where-Object { $_ -is [datetime] } | Sort-Object)[0]
+            $actions += "⚠️  All dates outside sane range — using raw oldest: $($oldestDate.ToString('yyyy-MM-dd'))"
+        }
 
         # ─────────────────────────────────────────────────────────────────────
         # PROVENANCE CLASSIFICATION
@@ -471,6 +508,9 @@ $filesToProcess | ForEach-Object -Parallel {
             try {
                 if (-not $DryRun) {
                     & exiftool -overwrite_original "-DateTimeOriginal=$exifDate" "-CreateDate=$exifDate" "$normalPath" 2>&1 | Out-Null
+                    # FIX: check exit code — exiftool returns non-zero on failure but
+                    # previously the error was swallowed and success was reported anyway.
+                    if ($LASTEXITCODE -ne 0) { throw "exiftool exited with code $LASTEXITCODE" }
                 }
                 $actions += "$actionPrefix DateTaken to $($oldestDate.ToString('yyyy-MM-dd'))"
                 $null = $processedCount.AddOrUpdate('DateTakenSet', 1, { param($k, $v) $v + 1 })
@@ -481,17 +521,27 @@ $filesToProcess | ForEach-Object -Parallel {
 
         # Set NTFS CreationTime to the canonical oldest date.
         # FileInfo.CreationTime is writable in .NET on Windows — no shell or API needed.
+        # FIX: wrapped in try/catch — throws UnauthorizedAccessException on read-only files.
         if ($dateCreated -ne $oldestDate) {
-            if (-not $DryRun) { $fileInfo.CreationTime = $oldestDate }
-            $actions += "$actionPrefix DateCreated to $($oldestDate.ToString('yyyy-MM-dd'))"
-            $null = $processedCount.AddOrUpdate('DateCreatedSet', 1, { param($k, $v) $v + 1 })
+            try {
+                if (-not $DryRun) { $fileInfo.CreationTime = $oldestDate }
+                $actions += "$actionPrefix DateCreated to $($oldestDate.ToString('yyyy-MM-dd'))"
+                $null = $processedCount.AddOrUpdate('DateCreatedSet', 1, { param($k, $v) $v + 1 })
+            } catch {
+                $actions += "❌ Failed to set DateCreated: $($_.Exception.Message)"
+            }
         }
 
         # Set NTFS LastWriteTime to the canonical oldest date.
+        # FIX: wrapped in try/catch — same reason as above.
         if ($dateModified -ne $oldestDate) {
-            if (-not $DryRun) { $fileInfo.LastWriteTime = $oldestDate }
-            $actions += "$actionPrefix DateModified to $($oldestDate.ToString('yyyy-MM-dd'))"
-            $null = $processedCount.AddOrUpdate('DateModifiedSet', 1, { param($k, $v) $v + 1 })
+            try {
+                if (-not $DryRun) { $fileInfo.LastWriteTime = $oldestDate }
+                $actions += "$actionPrefix DateModified to $($oldestDate.ToString('yyyy-MM-dd'))"
+                $null = $processedCount.AddOrUpdate('DateModifiedSet', 1, { param($k, $v) $v + 1 })
+            } catch {
+                $actions += "❌ Failed to set DateModified: $($_.Exception.Message)"
+            }
         }
 
         # ─────────────────────────────────────────────────────────────────────
@@ -546,6 +596,11 @@ $filesToProcess | ForEach-Object -Parallel {
                     if ($count -gt 0) {
                         $null = $processedCount.AddOrUpdate('WithCounter', 1, { param($k, $v) $v + 1 })
                     }
+                } elseif ($count -gt 999) {
+                    # FIX: suffix exhaustion was previously silent — the file was skipped
+                    # with no log entry and no failure counter increment.
+                    $actions += "❌ Rename failed → $($fileInfo.Name): no unique name available after 999 attempts"
+                    $null = $processedCount.AddOrUpdate('Failed', 1, { param($k, $v) $v + 1 })
                 }
             }
         }
@@ -572,16 +627,22 @@ $filesToProcess | ForEach-Object -Parallel {
 
     } catch {
         # Outer catch — handles any unexpected exception not caught by inner try blocks.
+        # FIX: $fileInfo may be null if the exception occurred before it was assigned
+        # (e.g. on the [System.IO.FileInfo] constructor). Fall back to the raw path.
         $null = $processedCount.AddOrUpdate('Failed', 1, { param($k, $v) $v + 1 })
         $progressLock.WaitOne() | Out-Null
         try {
             $currentCount = $processedCount['Processed']
-            Write-Host "[$currentCount/$totalFiles] Failed: $($fileInfo.Name) [$($_.Exception.Message)]" -ForegroundColor Red
+            $displayName  = if ($fileInfo) { $fileInfo.Name } else { Split-Path $fileLongPath -Leaf }
+            Write-Host "[$currentCount/$totalFiles] Failed: $displayName [$($_.Exception.Message)]" -ForegroundColor Red
         } finally {
             $progressLock.ReleaseMutex() | Out-Null
         }
     }
 } -ThrottleLimit ([System.Environment]::ProcessorCount)
+
+# Dispose the OS-level Mutex now that all parallel work is complete.
+$progressLock.Dispose()
 
 # ─────────────────────────────────────────────────────────────────────────────
 # FINAL SUMMARY

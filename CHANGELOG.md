@@ -7,6 +7,45 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.1.1] - 2026-03-30
+### Fixed
+- **Pre-flight exiftool check**: script now exits immediately with a clear message if
+  `exiftool` is not on PATH. Previously it ran to completion but silently failed
+  metadata reads and writes on every file (errors were swallowed by `catch {}`).
+- **Division by zero on empty folder**: added an early exit with a warning when no
+  supported media files are found, preventing `$index / $totalFiles` from throwing.
+- **File stream handle leak**: the `OpenRead()` stream was only closed on the happy
+  path. If `Read()` threw an exception the handle was never released. Moved disposal
+  into a `finally` block so it always runs.
+- **QuickTime MOV files misdetected as MP4**: `Get-TrueExtension` trimmed the ISO
+  brand string then compared against `'qt  '` (untrimmed). After `.Trim()` the brand
+  is `'qt'`, so the case never matched and QuickTime files fell through to `default`
+  (`.mp4`). Fixed the switch case to `'qt'`.
+- **exiftool exit code not checked**: `& exiftool ... 2>&1 | Out-Null` discarded both
+  output and the exit code. Write failures were counted as successes. Now checks
+  `$LASTEXITCODE -ne 0` and throws so the failure is caught and logged.
+- **Null `$fileInfo` in outer catch**: if an exception occurred before the
+  `[System.IO.FileInfo]` assignment, the outer catch block itself threw a
+  `NullReferenceException` accessing `.Name`. Falls back to `Split-Path` on the raw
+  path.
+- **`ConvertTo-LongPath` wildcard bug**: `-like '\\?\\*'` used `?` as a
+  single-character wildcard, matching paths like `\\X\anything`. Changed to
+  `.StartsWith('\\?\')` for a literal prefix check.
+- **`CreationTime`/`LastWriteTime` assignment unprotected**: direct property
+  assignment threw unhandled `UnauthorizedAccessException` on read-only files. Both
+  assignments are now wrapped in try/catch with per-file error logging.
+- **Rename suffix exhaustion silent**: when the `.001`–`.999` suffix loop was
+  exhausted the file was silently skipped with no log entry and no failure counter
+  increment. Now logs the failure and increments the Failed counter.
+- **Mutex never disposed**: the OS-level `Mutex` object was never released after the
+  parallel block finished. Added `$progressLock.Dispose()` after `ForEach-Object`.
+- **Date sanity bounds**: corrupt or camera-bug EXIF dates (year `0001`, `9999`, etc.)
+  could become the canonical "oldest" date and produce nonsensical filenames. Dates
+  before 1970-01-01 or after tomorrow are now excluded from selection, with a fallback
+  to the raw oldest and a visible warning in the progress output.
+
+---
+
 ## [1.1.0] - 2026-03-30
 ### Fixed
 - **Bug 1+2 — `Get-TrueExtension` always returned `$null`**: `switch -regex ($bytes)` on
