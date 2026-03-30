@@ -1,8 +1,22 @@
-# PowerShell
+# PowerShell editor backup files
 *.ps1~
 *.psm1~
+
+# General scratch/temp files
 *.tmp
 *.bak
+*.orig
 *.log
+
+# ExifTool backup files (created when -overwrite_original is not used)
+*_original
+*.ps1.bak
+
+# macOS
 .DS_Store
+
+# Windows
 Thumbs.db
+desktop.ini
+$RECYCLE.BIN/
+*.lnk
