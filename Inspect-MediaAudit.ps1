@@ -48,6 +48,7 @@ param(
     [Parameter(Mandatory=$false)]
     [switch]$Recurse
 )
+
 function ConvertTo-LongPath {
     param([string]$Path)
     if ($Path -like '\\?\\*') { return $Path }
@@ -103,21 +104,17 @@ if ($DryRun) {
 }
 Write-Host "Supported formats: $($validExtensions -join ', ')" -ForegroundColor DarkGray
 Write-Host "Progress updates every $reportInterval files" -ForegroundColor DarkGray
-$VerboseFlag = $PSCmdlet.MyInvocation.BoundParameters["Verbose"]
 $script:CounterRef = [ref]0
-$TotalCount = $filesToProcess.Count
 
 $filesToProcess | ForEach-Object -Parallel {
-    # === Per-file logic continues in Part 2 ===
 
-    $fileLongPath     = $_
-    $processedCount   = $using:processedCount
-    $progressLock     = $using:progressLock
-    $totalFiles       = $using:filteredCount
-    $reportInterval   = $using:reportInterval
-    $DryRun           = $using:DryRun
-    $actionPrefix     = $using:actionPrefix
-    $VerboseFlag      = $using:VerboseFlag
+    $fileLongPath   = $_
+    $processedCount = $using:processedCount
+    $progressLock   = $using:progressLock
+    $totalFiles     = $using:filteredCount
+    $reportInterval = $using:reportInterval
+    $DryRun         = $using:DryRun
+    $actionPrefix   = $using:actionPrefix
 
     $index = [System.Threading.Interlocked]::Increment($using:CounterRef)
     $percent = [math]::Round(($index / $totalFiles) * 100, 1)
@@ -125,216 +122,249 @@ $filesToProcess | ForEach-Object -Parallel {
     $actions = @()
 
     try {
-        $null = $processedCount.AddOrUpdate('Processed', 1, { param($k, $v) $v + 1 }) > $null
+        $null = $processedCount.AddOrUpdate('Processed', 1, { param($k, $v) $v + 1 })
         $normalPath = if ($fileLongPath.StartsWith('\\?\')) { $fileLongPath.Substring(4) } else { $fileLongPath }
         $fileInfo = [System.IO.FileInfo]$normalPath
-function Get-TrueExtension {
-        param([byte[]]$bytes)
-        switch -regex ($bytes) {
-            { $_[0] -eq 0xFF -and $_[1] -eq 0xD8 }      { return '.jpg' }
-            { $_[0] -eq 0x89 -and $_[1] -eq 0x50 }      { return '.png' }
-            { $_[0] -eq 0x47 -and $_[1] -eq 0x49 }      { return '.gif' }
-            { $_[0] -eq 0x49 -and $_[1] -eq 0x49 }      { return '.tif' }
-            { $_[0] -eq 0x4D -and $_[1] -eq 0x4D }      { return '.tif' }
-            { $_[4..7] -join '' -match 'ftyp' } {
-                $brand = [Text.Encoding]::ASCII.GetString($_[8..11])
-                switch ($brand) {
-                    'heic' { return '.heic' }
-                    'mif1' { return '.heic' }
-                    'mp41' { return '.mp4' }
-                    'mp42' { return '.mp4' }
-                    'qt  ' { return '.mov' }
-                    default { return '.mp4' }
+
+        # FIX (Bug 1+2): Rewrote magic-number detection using if/elseif chains instead
+        # of 'switch -regex ($bytes)'. When PowerShell switch receives a [byte[]], it
+        # iterates individual elements — so $_ inside each case was a single scalar byte,
+        # not the full array. That made $_[0]/$_[1] always return the same scalar (or
+        # $null), so every format check silently failed and the function returned $null
+        # for all files. Also fixed the ftyp/WEBP branches: the original used
+        # '-join "" -match "ftyp"' which joins bytes as decimal integers (e.g.
+        # "102116121112"), never matching ASCII text. Now uses GetString() to decode.
+        function Get-TrueExtension {
+            param([byte[]]$bytes)
+            if ($bytes[0] -eq 0xFF -and $bytes[1] -eq 0xD8)                       { return '.jpg'  }
+            if ($bytes[0] -eq 0x89 -and $bytes[1] -eq 0x50)                       { return '.png'  }
+            if ($bytes[0] -eq 0x47 -and $bytes[1] -eq 0x49)                       { return '.gif'  }
+            if (($bytes[0] -eq 0x49 -and $bytes[1] -eq 0x49) -or
+                ($bytes[0] -eq 0x4D -and $bytes[1] -eq 0x4D))                     { return '.tif'  }
+            if ($bytes.Length -ge 12 -and
+                [Text.Encoding]::ASCII.GetString($bytes[4..7]) -eq 'ftyp') {
+                $brand = [Text.Encoding]::ASCII.GetString($bytes[8..11]).Trim()
+                return switch ($brand) {
+                    'heic'  { '.heic' }
+                    'mif1'  { '.heic' }
+                    'mp41'  { '.mp4'  }
+                    'mp42'  { '.mp4'  }
+                    'qt  '  { '.mov'  }
+                    default { '.mp4'  }
                 }
             }
-            { $_[8..11] -join '' -eq 'WEBP' }           { return '.webp' }
-            default { return $null }
+            if ($bytes.Length -ge 12 -and
+                [Text.Encoding]::ASCII.GetString($bytes[8..11]) -eq 'WEBP')       { return '.webp' }
+            return $null
         }
-    }
 
-    # === Header read for signature check ===
-    $bytes = [byte[]]::new(12)
-    try {
-        $stream = $fileInfo.OpenRead()
-        $stream.Read($bytes, 0, 12) > $null
-        $stream.Close()
-    } catch {
-        $actions += "❌ Read error: $($fileInfo.Name)"
-        $processedCount.AddOrUpdate('Failed', 1, { param($k, $v) $v + 1 }) > $null
-        return
-    }
+        # === Header read for signature check ===
+        $bytes = [byte[]]::new(12)
+        try {
+            $stream = $fileInfo.OpenRead()
+            $null = $stream.Read($bytes, 0, 12)
+            $stream.Close()
+        } catch {
+            $actions += "❌ Read error: $($fileInfo.Name)"
+            $null = $processedCount.AddOrUpdate('Failed', 1, { param($k, $v) $v + 1 })
+            return
+        }
 
-    $trueExt = Get-TrueExtension $bytes
-    $actualExt = $fileInfo.Extension.ToLower()
+        $trueExt = Get-TrueExtension $bytes
+        $actualExt = $fileInfo.Extension.ToLower()
 
-    if ($trueExt -and $actualExt -ne $trueExt) {
-        $processedCount.AddOrUpdate('SignatureMismatchCount', 1, { param($k, $v) $v + 1 }) > $null
-        $newPath = [System.IO.Path]::ChangeExtension($fileInfo.FullName, $trueExt)
-        $newName = [System.IO.Path]::GetFileName($newPath)
+        if ($trueExt -and $actualExt -ne $trueExt) {
+            $null = $processedCount.AddOrUpdate('SignatureMismatchCount', 1, { param($k, $v) $v + 1 })
+            $newPath = [System.IO.Path]::ChangeExtension($fileInfo.FullName, $trueExt)
+            $newName = [System.IO.Path]::GetFileName($newPath)
 
-        if ($DryRun) {
-            $actions += "🔍 Signature mismatch → Would rename to $newName"
-        } else {
+            if ($DryRun) {
+                $actions += "🔍 Signature mismatch → Would rename to $newName"
+            } else {
+                try {
+                    Rename-Item -LiteralPath $fileInfo.FullName -NewName $newName
+                    $actions += "✅ Renamed: $($fileInfo.Name) → $newName"
+                    $null = $processedCount.AddOrUpdate('SignatureRenamedCount', 1, { param($k, $v) $v + 1 })
+                    # FIX (Bug 5): Refresh $fileInfo and $normalPath after a successful
+                    # signature rename. Previously both still pointed to the old (now
+                    # deleted) path, so all subsequent timestamp reads, metadata writes,
+                    # and the final rename silently operated on a non-existent file.
+                    $normalPath = Join-Path $fileInfo.Directory.FullName $newName
+                    $fileInfo   = [System.IO.FileInfo]$normalPath
+                } catch {
+                    $actions += "❌ Rename failed: $($_.Exception.Message)"
+                    $null = $processedCount.AddOrUpdate('Failed', 1, { param($k, $v) $v + 1 })
+                }
+            }
+        }
+
+        # === Timestamp extraction ===
+        $dateTaken    = $null
+        $mediaCreated = $null
+        $dateCreated  = $fileInfo.CreationTime.ToLocalTime()
+        $dateModified = $fileInfo.LastWriteTime.ToLocalTime()
+        $isVideo      = $fileInfo.Extension -match '\.(qt|mpg|mp4|mov|avi|mkv|wmv)$'
+
+        if ($isVideo) {
             try {
-                Rename-Item -LiteralPath $fileInfo.FullName -NewName $newName
-                $actions += "✅ Renamed: $($fileInfo.Name) → $newName"
-                $processedCount.AddOrUpdate('SignatureRenamedCount', 1, { param($k, $v) $v + 1 }) > $null
-            } catch {
-                $actions += "❌ Rename failed: $($_.Exception.Message)"
-                $processedCount.AddOrUpdate('Failed', 1, { param($k, $v) $v + 1 }) > $null
-            }
+                $exifOut = & exiftool -api QuickTimeUTC -s -QuickTime:CreateDate "$normalPath"
+                if ($exifOut -match 'Create\s*Date\s*:\s*(\d{4}:\d{2}:\d{2} \d{2}:\d{2}:\d{2})') {
+                    $mediaCreated = [datetime]::ParseExact($matches[1], 'yyyy:MM:dd HH:mm:ss', $null).ToLocalTime()
+                }
+            } catch {}
+        } else {
+            # Removed the 'EXIF:' group prefix so XMP and other metadata groups are
+            # also searched — broader coverage with no downside since exiftool is already required.
+            try {
+                $exifOut = & exiftool -s -DateTimeOriginal "$normalPath"
+                if ($exifOut -match 'DateTimeOriginal\s*:\s*(\d{4}:\d{2}:\d{2} \d{2}:\d{2}:\d{2})') {
+                    $dateTaken = [datetime]::ParseExact($matches[1], 'yyyy:MM:dd HH:mm:ss', $null).ToLocalTime()
+                }
+            } catch {}
         }
-    }
-    # === Timestamp extraction ===
-    $dateTaken     = $null
-    $mediaCreated  = $null
-    $dateCreated   = $fileInfo.CreationTime.ToLocalTime()
-    $dateModified  = $fileInfo.LastWriteTime.ToLocalTime()
-    $isVideo       = $fileInfo.Extension -match '\.(qt|mpg|mp4|mov|avi|mkv|wmv)$'
 
-    if ($isVideo) {
-        try {
-            $exifOut = & exiftool -api QuickTimeUTC -s -QuickTime:CreateDate "$normalPath"
-            if ($exifOut -match 'Create\s*Date\s*:\s*(\d{4}:\d{2}:\d{2} \d{2}:\d{2}:\d{2})') {
-                $mediaCreated = [datetime]::ParseExact($matches[1], 'yyyy:MM:dd HH:mm:ss', $null).ToLocalTime()
-            }
-        } catch {}
-    } else {
-        try {
-            $exifOut = & exiftool -s -EXIF:DateTimeOriginal "$normalPath"
-            if ($exifOut -match 'DateTimeOriginal\s*:\s*(\d{4}:\d{2}:\d{2} \d{2}:\d{2}:\d{2})') {
-                $dateTaken = [datetime]::ParseExact($matches[1], 'yyyy:MM:dd HH:mm:ss', $null).ToLocalTime()
-            }
-        } catch {}
-    }
-
-    if (-not $dateTaken -and -not $isVideo -and $normalPath.Length -lt 260) {
-        try {
-            $shell = New-Object -ComObject Shell.Application
-            $folder = $shell.NameSpace($fileInfo.Directory.FullName)
-            $item = $folder.ParseName($fileInfo.Name)
-            $comDate = $item.ExtendedProperty("System.Photo.DateTaken")
-            if ($comDate -is [datetime]) { $dateTaken = $comDate }
-        } finally {
-            if ($shell) {
-                [System.Runtime.Interopservices.Marshal]::ReleaseComObject($shell) | Out-Null
-            }
-        }
-    }
+        # FIX (Bug 8): Removed Shell.Application COM fallback for reading DateTaken.
+        # Shell.Application is STA-threaded; ForEach-Object -Parallel dispatches work on
+        # MTA thread-pool workers, causing a COM apartment mismatch. The exiftool call
+        # above (now without the EXIF: group restriction) covers the same metadata
+        # including XMP:DateTimeOriginal, making the COM fallback unnecessary.
 
         # === Timestamp selection ===
-    $candidateDates = @()
-    if ($dateTaken)    { $candidateDates += $dateTaken }
-    if ($mediaCreated) { $candidateDates += $mediaCreated }
-    $candidateDates += $dateCreated, $dateModified
-    $oldestDate = ($candidateDates | Where-Object { $_ -is [datetime] } | Sort-Object)[0]
+        $candidateDates = @()
+        if ($dateTaken)    { $candidateDates += $dateTaken }
+        if ($mediaCreated) { $candidateDates += $mediaCreated }
+        $candidateDates += $dateCreated, $dateModified
+        $oldestDate = ($candidateDates | Where-Object { $_ -is [datetime] } | Sort-Object)[0]
 
-    # === Provenance classification ===
-    $provenanceType = if ($dateTaken -and -not $mediaCreated -and -not $dateCreated -and -not $dateModified) {
-        "EXIF-only"
-    } elseif ($mediaCreated -and -not $dateTaken -and -not $dateCreated -and -not $dateModified) {
-        "QuickTime-only"
-    } elseif (-not $dateTaken -and -not $mediaCreated -and ($dateCreated -or $dateModified)) {
-        "Fallback-only"
-    } elseif ($dateTaken -or $mediaCreated) {
-        "Mixed-sources"
-    } else {
-        "Unknown"
-    }
-
-    $processedCount.AddOrUpdate($provenanceType, 1, { param($k, $v) $v + 1 }) > $null
-    $actions += "[Source] Provenance → $provenanceType"
-        # === Metadata write-back ===
-    if (-not $isVideo -and -not $dateTaken -and $normalPath.Length -lt 260) {
-        try {
-            if (-not $DryRun) {
-                $shell = New-Object -ComObject Shell.Application
-                $folder = $shell.NameSpace($fileInfo.Directory.FullName)
-                $item = $folder.ParseName($fileInfo.Name)
-                $item.ExtendedProperty("System.Photo.DateTaken") = $oldestDate
-            }
-            $actions += "$actionPrefix DateTaken to $($oldestDate.ToString('yyyy-MM-dd'))"
-            $processedCount.AddOrUpdate('DateTakenSet', 1, { param($k, $v) $v + 1 }) > $null
-        } catch {
-            $actions += "❌ Failed to set DateTaken: $($_.Exception.Message)"
-        }
-    }
-
-    if ($dateCreated -ne $oldestDate) {
-        if (-not $DryRun) { $fileInfo.CreationTime = $oldestDate }
-        $actions += "$actionPrefix DateCreated to $($oldestDate.ToString('yyyy-MM-dd'))"
-        $processedCount.AddOrUpdate('DateCreatedSet', 1, { param($k, $v) $v + 1 }) > $null
-    }
-
-    if ($dateModified -ne $oldestDate) {
-        if (-not $DryRun) { $fileInfo.LastWriteTime = $oldestDate }
-        $actions += "$actionPrefix DateModified to $($oldestDate.ToString('yyyy-MM-dd'))"
-        $processedCount.AddOrUpdate('DateModifiedSet', 1, { param($k, $v) $v + 1 }) > $null
-    }
-
-    # === Rename file based on timestamp ===
-    $base = $oldestDate.ToString('yyyyMMdd_HHmmss')
-    if ($oldestDate.Millisecond) {
-        $base += '.' + $oldestDate.Millisecond.ToString('000')
-    }
-    $ext = $fileInfo.Extension.ToLower()
-    $newName = "${base}${ext}"
-    $targetPath = Join-Path $fileInfo.Directory.FullName $newName
-
-    if ($fileInfo.Name -ne $newName) {
-        $count = 1
-        while ((Test-Path $targetPath) -and ($count -le 999)) {
-            $suffix = $count.ToString('000')
-            $newName = "${base}.${suffix}${ext}"
-            $targetPath = Join-Path $fileInfo.Directory.FullName $newName
-            $count++
-        }
-
-        if ($DryRun) {
-            $actions += "Would rename → $($fileInfo.Name) → $newName"
+        # FIX (Bug 6): Rewrote provenance classification. The original conditions for
+        # 'EXIF-only' and 'QuickTime-only' required -not $dateCreated -and -not $dateModified,
+        # but those variables are always populated from the filesystem (never null/false),
+        # so those two branches were permanently unreachable — every file with EXIF data
+        # fell into 'Mixed-sources' instead. Classification now uses only the presence of
+        # extracted metadata (dateTaken / mediaCreated) to determine the source type.
+        $provenanceType = if ($dateTaken -and $mediaCreated) {
+            'Mixed-sources'
+        } elseif ($dateTaken) {
+            'EXIF-only'
+        } elseif ($mediaCreated) {
+            'QuickTime-only'
+        } elseif ($dateCreated -or $dateModified) {
+            'Fallback-only'
         } else {
+            'Unknown'
+        }
+
+        $null = $processedCount.AddOrUpdate($provenanceType, 1, { param($k, $v) $v + 1 })
+        $actions += "[Source] Provenance → $provenanceType"
+
+        # === Metadata write-back ===
+        # FIX (Bug 8 follow-on): Replaced Shell.Application COM write for DateTaken with
+        # an exiftool call. COM objects are STA-threaded and must not be created in the
+        # MTA thread-pool workers used by ForEach-Object -Parallel. Using exiftool is also
+        # more reliable across file formats and has no 260-char path restriction.
+        if (-not $isVideo -and -not $dateTaken) {
+            $exifDate = $oldestDate.ToString('yyyy:MM:dd HH:mm:ss')
             try {
-                Move-Item -LiteralPath $fileInfo.FullName -Destination $targetPath
-                $actions += "Renamed → $($fileInfo.Name) → $newName"
-                $processedCount.AddOrUpdate('Renamed', 1, { param($k, $v) $v + 1 }) > $null
-                if ($count -gt 1) {
-                    $processedCount.AddOrUpdate('WithCounter', 1, { param($k, $v) $v + 1 }) > $null
+                if (-not $DryRun) {
+                    & exiftool -overwrite_original "-DateTimeOriginal=$exifDate" "-CreateDate=$exifDate" "$normalPath" 2>&1 | Out-Null
                 }
+                $actions += "$actionPrefix DateTaken to $($oldestDate.ToString('yyyy-MM-dd'))"
+                $null = $processedCount.AddOrUpdate('DateTakenSet', 1, { param($k, $v) $v + 1 })
             } catch {
-                $actions += "❌ Rename failed → $($fileInfo.Name): $($_.Exception.Message)"
-                $processedCount.AddOrUpdate('Failed', 1, { param($k, $v) $v + 1 }) > $null
+                $actions += "❌ Failed to set DateTaken: $($_.Exception.Message)"
             }
         }
-    }
-        # === Progress output ===
-    $progressLock.WaitOne() | Out-Null
-    try {
-        $currentCount = $processedCount['Processed']
-        if ($currentCount -le 10 -or $currentCount % $reportInterval -eq 0) {
-            $color = if ($actions -join '; ' -like "*Skipped*") { "DarkGray" }
-                     elseif ($actions -join '; ' -like "*Failed*") { "Red" }
-                     else { "Green" }
-            Write-Host "[$percentString%] ($currentCount/$totalFiles) $($actions -join '; ') - $($fileInfo.Name)" -ForegroundColor $color
+
+        if ($dateCreated -ne $oldestDate) {
+            if (-not $DryRun) { $fileInfo.CreationTime = $oldestDate }
+            $actions += "$actionPrefix DateCreated to $($oldestDate.ToString('yyyy-MM-dd'))"
+            $null = $processedCount.AddOrUpdate('DateCreatedSet', 1, { param($k, $v) $v + 1 })
         }
-    } finally {
-        $progressLock.ReleaseMutex() | Out-Null
+
+        if ($dateModified -ne $oldestDate) {
+            if (-not $DryRun) { $fileInfo.LastWriteTime = $oldestDate }
+            $actions += "$actionPrefix DateModified to $($oldestDate.ToString('yyyy-MM-dd'))"
+            $null = $processedCount.AddOrUpdate('DateModifiedSet', 1, { param($k, $v) $v + 1 })
+        }
+
+        # === Rename file based on timestamp ===
+        $base = $oldestDate.ToString('yyyyMMdd_HHmmss')
+        if ($oldestDate.Millisecond) {
+            $base += '.' + $oldestDate.Millisecond.ToString('000')
+        }
+        $ext        = $fileInfo.Extension.ToLower()
+        $newName    = "${base}${ext}"
+        $targetPath = Join-Path $fileInfo.Directory.FullName $newName
+
+        if ($fileInfo.Name -ne $newName) {
+            if ($DryRun) {
+                $actions += "Would rename → $($fileInfo.Name) → $newName"
+            } else {
+                # FIX (Race condition): Replaced Test-Path + Move-Item with a try/catch
+                # retry loop. Test-Path is not atomic — two parallel threads could both
+                # pass the existence check and then collide on the rename. Catching
+                # IOException and incrementing the suffix counter is race-safe.
+                $count = 0
+                $moved = $false
+                while (-not $moved -and $count -le 999) {
+                    if ($count -gt 0) {
+                        $newName    = "${base}.$($count.ToString('000'))${ext}"
+                        $targetPath = Join-Path $fileInfo.Directory.FullName $newName
+                    }
+                    try {
+                        Move-Item -LiteralPath $fileInfo.FullName -Destination $targetPath -ErrorAction Stop
+                        $moved = $true
+                    } catch [System.IO.IOException] {
+                        $count++
+                    } catch {
+                        $actions += "❌ Rename failed → $($fileInfo.Name): $($_.Exception.Message)"
+                        $null = $processedCount.AddOrUpdate('Failed', 1, { param($k, $v) $v + 1 })
+                        break
+                    }
+                }
+                if ($moved) {
+                    $actions += "Renamed → $($fileInfo.Name) → $newName"
+                    $null = $processedCount.AddOrUpdate('Renamed', 1, { param($k, $v) $v + 1 })
+                    if ($count -gt 0) {
+                        $null = $processedCount.AddOrUpdate('WithCounter', 1, { param($k, $v) $v + 1 })
+                    }
+                }
+            }
+        }
+
+        # === Progress output ===
+        $progressLock.WaitOne() | Out-Null
+        try {
+            $currentCount = $processedCount['Processed']
+            if ($currentCount -le 10 -or $currentCount % $reportInterval -eq 0) {
+                $color = if ($actions -join '; ' -like "*Skipped*") { "DarkGray" }
+                         elseif ($actions -join '; ' -like "*Failed*") { "Red" }
+                         else { "Green" }
+                Write-Host "[$percentString%] ($currentCount/$totalFiles) $($actions -join '; ') - $($fileInfo.Name)" -ForegroundColor $color
+            }
+        } finally {
+            $progressLock.ReleaseMutex() | Out-Null
+        }
+    } catch {
+        $null = $processedCount.AddOrUpdate('Failed', 1, { param($k, $v) $v + 1 })
+        $progressLock.WaitOne() | Out-Null
+        try {
+            $currentCount = $processedCount['Processed']
+            Write-Host "[$currentCount/$totalFiles] Failed: $($fileInfo.Name) [$($_.Exception.Message)]" -ForegroundColor Red
+        } finally {
+            $progressLock.ReleaseMutex() | Out-Null
+        }
     }
-} catch {
-    $processedCount.AddOrUpdate('Failed', 1, { param($k, $v) $v + 1 }) > $null
-    $progressLock.WaitOne() | Out-Null
-    try {
-        $currentCount = $processedCount['Processed']
-        Write-Host "[$currentCount/$totalFiles] Failed: $($fileInfo.Name) [$($_.Exception.Message)]" -ForegroundColor Red
-    } finally {
-        $progressLock.ReleaseMutex() | Out-Null
-    }
-}
 } -ThrottleLimit ([System.Environment]::ProcessorCount)
+
 # === Final summary ===
 $endTime = Get-Date
 $elapsed = New-TimeSpan $startTime $endTime
 
-Write-Host "`n" + ('═' * 50) -ForegroundColor Cyan
+# FIX (Bug 7): Wrapped string concatenation in parentheses. Without them, PowerShell's
+# argument parser treats "`n", "+", and ('═' * 50) as three separate positional values,
+# printing a literal " + " between them rather than concatenating into one string.
+Write-Host ("`n" + ('═' * 50)) -ForegroundColor Cyan
 Write-Host ("{0,-30}: {1}" -f "Total files scanned", $totalCount)
 Write-Host ("{0,-30}: {1}" -f "Files matching extensions", $filteredCount)
 
@@ -353,11 +383,11 @@ Write-Host ("{0,-30}: {1}" -f "Signature mismatches",        $processedCount['Si
 Write-Host ("{0,-30}: {1}" -f "Signature-based renames",     $processedCount['SignatureRenamedCount'])
 Write-Host ("{0,-30}: {1}" -f "Files skipped",               $processedCount['Skipped'])
 Write-Host ("{0,-30}: {1}" -f "Failures",                    $processedCount['Failed'])
-Write-Host ("{0,-30}: {1}" -f "EXIF-only sources",          $processedCount['EXIF-only'])
-Write-Host ("{0,-30}: {1}" -f "QuickTime-only sources",     $processedCount['QuickTime-only'])
-Write-Host ("{0,-30}: {1}" -f "Fallback-only sources",      $processedCount['Fallback-only'])
-Write-Host ("{0,-30}: {1}" -f "Mixed-source files",         $processedCount['Mixed-sources'])
-Write-Host ("{0,-30}: {1}" -f "Unknown provenance",         $processedCount['Unknown'])
+Write-Host ("{0,-30}: {1}" -f "EXIF-only sources",           $processedCount['EXIF-only'])
+Write-Host ("{0,-30}: {1}" -f "QuickTime-only sources",      $processedCount['QuickTime-only'])
+Write-Host ("{0,-30}: {1}" -f "Fallback-only sources",       $processedCount['Fallback-only'])
+Write-Host ("{0,-30}: {1}" -f "Mixed-source files",          $processedCount['Mixed-sources'])
+Write-Host ("{0,-30}: {1}" -f "Unknown provenance",          $processedCount['Unknown'])
 Write-Host ('═' * 50) -ForegroundColor Cyan
 <#
 Inspect-MediaAudit.ps1
@@ -380,20 +410,19 @@ SUPPORTED FORMATS:
 
 FEATURES:
     • Header signature check via magic number analysis
-    • Renaming files when extension doesn’t match actual content
-    • Metadata extraction via ExifTool and COM (EXIF, QuickTime, NTFS)
+    • Renaming files when extension doesn't match actual content
+    • Metadata extraction via ExifTool (EXIF, QuickTime, XMP, NTFS)
     • Selection of oldest valid timestamp as canonical "DateTaken"
     • Corrections to DateCreated and LastWriteTime
     • File rename using timestamp format (yyyyMMdd_HHmmss.ext)
     • Suffix logic for timestamp collisions (.001, .002, …)
-    • Provenance tagging: EXIF-only, Fallback-only, Mixed-sources, etc.
+    • Provenance tagging: EXIF-only, QuickTime-only, Fallback-only, Mixed-sources, etc.
     • Thread-safe counters and color-coded progress output
     • Detailed summary report upon completion
 
 NOTES:
     • Requires PowerShell 7+
     • Ensure ExifTool is in PATH for accurate metadata extraction
-    • COM fallback is available for local NTFS-bound image files
     • Use -DryRun mode for safe simulation (no writes or renames)
 
 EXAMPLE:
