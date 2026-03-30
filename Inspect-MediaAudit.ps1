@@ -91,6 +91,36 @@ PARALLEL EXECUTION NOTES
   affect the outer scope (except through the shared ConcurrentDictionary).
 #>
 
+<#
+IN PLAIN ENGLISH
+────────────────
+If you have a folder full of photos and videos that are a mess — wrong dates,
+random names like IMG_4892.jpg, or files pretending to be a format they're not
+— this script fixes all of that in one pass.
+
+It solves three problems:
+
+  PROBLEM 1 — Files wearing the wrong label
+    Some files have the wrong extension — a photo saved as .mov, or a video
+    labelled .jpg. The script reads the actual contents of each file to check
+    what it really is, and renames it to the correct extension if it doesn't match.
+
+  PROBLEM 2 — Dates are wrong, missing, or inconsistent
+    Every photo and video carries hidden date information ("when was this taken?").
+    That date can live in several places — embedded EXIF metadata, QuickTime tags,
+    or the filesystem — and they often disagree. The script reads all of them,
+    picks the oldest (most likely the original capture date), and makes every
+    date field agree.
+
+  PROBLEM 3 — Filenames are meaningless
+    IMG_4892.jpg tells you nothing. The script renames every file to its capture
+    date and time — 20231225_143022.jpg — so your library sorts in chronological
+    order and duplicates are easy to spot.
+
+  SAFE TO RUN: use -DryRun first and the script will tell you exactly what it
+  would change, without touching a single file.
+#>
+
 param(
     # Root folder to scan. Must exist — validated before any processing begins.
     [Parameter(Mandatory=$true)]
