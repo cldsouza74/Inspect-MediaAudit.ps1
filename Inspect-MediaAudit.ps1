@@ -21,12 +21,13 @@
 ║           │                                                                      ║
 ║           ▼                                                                      ║
 ║ ┌────────────────────────────────────────────────┐                              ║
-║ │ For each file:                                │                              ║
+║ │ For each file (parallel):                     │                              ║
 ║ │  - Validate header vs extension                │                              ║
 ║ │  - Rename if mismatched                        │                              ║
-║ │  - Extract EXIF/QuickTime/NTFS timestamps      │                              ║
+║ │  - Extract EXIF/QuickTime/XMP timestamps       │                              ║
 ║ │  - Determine oldest valid date                 │                              ║
-║ │  - Set DateTaken → CreationTime → LastWriteTime│                              ║
+║ │  - Write DateTimeOriginal via exiftool         │                              ║
+║ │  - Set CreationTime → LastWriteTime            │                              ║
 ║ │  - Tag provenance type                         │                              ║
 ║ │  - Rename file based on oldest timestamp       │                              ║
 ║ └────────────────────────────────────────────────┘                              ║
@@ -35,20 +36,84 @@
 ║ ┌──────────────────────────────────────────────┐                                 ║
 ║ │ Log summary + per-source provenance stats     │                                 ║
 ╚══════════════════════════════════════════════════════════════════════════════════╝
+
+TROUBLESHOOTING GUIDE
+─────────────────────
+Problem: "exiftool is not recognized"
+  Cause : exiftool.exe is not on the system PATH.
+  Fix   : Download from https://exiftool.org, place exiftool.exe somewhere on PATH,
+          then verify with: exiftool -ver
+
+Problem: Script exits immediately with "Path not found"
+  Cause : -Path argument does not exist or is mis-typed.
+  Fix   : Verify the folder exists: Test-Path "D:\YourFolder"
+
+Problem: No files processed (0 matching extensions)
+  Cause : Files may have uppercase extensions (.JPG, .MOV) or unsupported formats.
+  Fix   : The script lowercases extensions before comparing, so case is not an issue.
+          Check that your files use one of the supported extensions listed below.
+
+Problem: Signature mismatches detected but nothing renamed
+  Cause : -DryRun is active, or the rename itself failed (permissions, locked file).
+  Fix   : Remove -DryRun to apply changes, or check file permissions.
+          Failures appear as red lines in output and count in the Failures total.
+
+Problem: DateTaken is not being written to image files
+  Cause : exiftool cannot write to the file (read-only, locked, or unsupported format).
+  Fix   : Ensure exiftool is in PATH and the files are not open in another app.
+          Check the Failures counter in the summary — errors are logged per file.
+
+Problem: Provenance shows mostly "Fallback-only"
+  Cause : Files have no embedded EXIF or QuickTime metadata — timestamps come from
+          the filesystem only. This is common with screenshots and downloaded images.
+  Fix   : No action needed; the script still normalises CreationTime/LastWriteTime.
+
+Problem: Counter suffixes (.001, .002) appearing on many files
+  Cause : Multiple files share the same timestamp to the second (e.g. burst photos).
+  Fix   : Expected behaviour. Each unique second gets one file; collisions get a suffix.
+
+Problem: Progress output is very sparse (only every 100+ files)
+  Cause : reportInterval is 1% of total file count (minimum 100). For small runs it
+          prints every file; for large runs it prints every ~1%.
+  Fix   : This is by design to keep output readable. First 10 files always print.
+
+PARALLEL EXECUTION NOTES
+─────────────────────────
+• ForEach-Object -Parallel runs one runspace per logical CPU core (ThrottleLimit).
+• All shared counters use ConcurrentDictionary.AddOrUpdate — safe across threads.
+• The progress Mutex (WaitOne/ReleaseMutex) serialises console writes to prevent
+  interleaved output. A finally block always releases it, even on exception.
+• Interlocked.Increment on $CounterRef gives each runspace a unique sequential index
+  without a lock — used only for the percentage display, not for correctness.
+• $using: is the only way to pass outer-scope variables into a parallel scriptblock.
+  The variables are copied at the time the block starts; mutations inside do NOT
+  affect the outer scope (except through the shared ConcurrentDictionary).
 #>
 
 param(
+    # Root folder to scan. Must exist — validated before any processing begins.
     [Parameter(Mandatory=$true)]
     [ValidateScript({ if (-not (Test-Path $_)) { throw "Path not found: $_" }; $true })]
     [string]$Path,
 
+    # When set, all actions are simulated and logged but no files are written or renamed.
+    # Always use -DryRun first on an unfamiliar folder to preview what will change.
     [Parameter(Mandatory=$false)]
     [switch]$DryRun,
 
+    # When set, scans all subdirectories recursively. Without it, only the top-level
+    # folder is processed.
     [Parameter(Mandatory=$false)]
     [switch]$Recurse
 )
 
+# ─────────────────────────────────────────────────────────────────────────────
+# LONG-PATH SUPPORT
+# Windows has a 260-char MAX_PATH limit by default. Prefixing a path with \\?\
+# bypasses it and allows paths up to ~32,767 chars. We apply this automatically
+# for any path at or near the limit (>=240 chars gives us a safety margin for
+# appended filenames). The prefix must NOT already be present to avoid doubling.
+# ─────────────────────────────────────────────────────────────────────────────
 function ConvertTo-LongPath {
     param([string]$Path)
     if ($Path -like '\\?\\*') { return $Path }
@@ -57,11 +122,21 @@ function ConvertTo-LongPath {
 }
 
 $longPath = ConvertTo-LongPath $Path
+
+# All extensions that will be considered for processing (lowercased for comparison).
+# Files with any other extension are counted in $totalCount but skipped otherwise.
 $validExtensions = @(
     '.qt','.jfif','.jpg','.jpeg','.png','.gif','.bmp','.tiff','.tif','.heic',
     '.mpg','.mp4','.mov','.avi','.mkv','.nef','.cr2','.dng','.crw','.webp','.wmv'
 )
 
+# ─────────────────────────────────────────────────────────────────────────────
+# SHARED COUNTERS
+# ConcurrentDictionary is safe for simultaneous reads/writes from parallel
+# runspaces. All counters are pre-initialised to 0 so AddOrUpdate never needs
+# to handle a missing key — the update delegate ($v + 1) is always used.
+# Provenance keys match the strings assigned in the $provenanceType block below.
+# ─────────────────────────────────────────────────────────────────────────────
 $processedCount = [System.Collections.Concurrent.ConcurrentDictionary[string, int]]::new()
 @(
     'Processed','DateTakenSet','DateCreatedSet','DateModifiedSet',
@@ -71,6 +146,8 @@ $processedCount = [System.Collections.Concurrent.ConcurrentDictionary[string, in
 ) | ForEach-Object { $processedCount[$_] = 0 }
 
 $startTime = Get-Date
+
+# SearchOption controls whether Directory.EnumerateFiles recurses into sub-folders.
 $searchOption = if ($Recurse) {
     [System.IO.SearchOption]::AllDirectories
 } else {
@@ -78,6 +155,14 @@ $searchOption = if ($Recurse) {
 }
 Write-Host "`n📂 Scanning '$Path' ($searchOption mode)" -ForegroundColor Cyan
 
+# ─────────────────────────────────────────────────────────────────────────────
+# FILE COLLECTION
+# EnumerateFiles streams file paths lazily — no full directory load into memory.
+# ConcurrentBag is used because it supports lock-free concurrent adds (though
+# here the add loop is single-threaded; it's a natural fit for the parallel
+# consumer below). We separate $totalCount (all files seen) from $filteredCount
+# (only supported media) so the summary can report both.
+# ─────────────────────────────────────────────────────────────────────────────
 $allFiles = [System.IO.Directory]::EnumerateFiles($longPath, '*.*', $searchOption)
 $filesToProcess = [System.Collections.Concurrent.ConcurrentBag[string]]::new()
 $totalCount = 0
@@ -92,6 +177,14 @@ foreach ($file in $allFiles) {
     }
 }
 
+# ─────────────────────────────────────────────────────────────────────────────
+# PROGRESS THROTTLE
+# A Mutex (rather than a Monitor or SemaphoreSlim) is used because it can be
+# shared across PS runspaces, which are true OS threads. Progress is printed
+# for the first 10 files always (so you see activity immediately), then every
+# reportInterval files (1% of total, minimum 100) to prevent console flooding
+# on large runs.
+# ─────────────────────────────────────────────────────────────────────────────
 $progressLock = [System.Threading.Mutex]::new()
 $reportInterval = [math]::Max(100, [math]::Round($filteredCount * 0.01))
 
@@ -104,10 +197,23 @@ if ($DryRun) {
 }
 Write-Host "Supported formats: $($validExtensions -join ', ')" -ForegroundColor DarkGray
 Write-Host "Progress updates every $reportInterval files" -ForegroundColor DarkGray
+
+# Interlocked.Increment is a lock-free atomic increment — safe across threads.
+# It gives each parallel runspace a unique sequential index used only for the
+# percentage display. It does not affect correctness of any other operation.
 $script:CounterRef = [ref]0
 
+# ─────────────────────────────────────────────────────────────────────────────
+# PARALLEL PROCESSING
+# ThrottleLimit caps concurrent runspaces at the number of logical CPU cores.
+# Each runspace is an independent PS session — outer variables are not in scope
+# unless explicitly imported with $using:. Mutations to $using: variables do
+# NOT propagate back (the ConcurrentDictionary is the exception because we pass
+# the object reference, and both sides operate on the same heap object).
+# ─────────────────────────────────────────────────────────────────────────────
 $filesToProcess | ForEach-Object -Parallel {
 
+    # Import all needed outer-scope values into this runspace via $using:.
     $fileLongPath   = $_
     $processedCount = $using:processedCount
     $progressLock   = $using:progressLock
@@ -116,16 +222,24 @@ $filesToProcess | ForEach-Object -Parallel {
     $DryRun         = $using:DryRun
     $actionPrefix   = $using:actionPrefix
 
+    # Atomic index for percentage display only — not used for any file operation.
     $index = [System.Threading.Interlocked]::Increment($using:CounterRef)
     $percent = [math]::Round(($index / $totalFiles) * 100, 1)
     $percentString = "{0,5:N1}" -f $percent
+
+    # Accumulates human-readable action strings for this file's progress line.
     $actions = @()
 
     try {
         $null = $processedCount.AddOrUpdate('Processed', 1, { param($k, $v) $v + 1 })
+
+        # Strip the \\?\ prefix for APIs that don't accept extended-length paths,
+        # while keeping $fileLongPath intact for file I/O operations that do.
         $normalPath = if ($fileLongPath.StartsWith('\\?\')) { $fileLongPath.Substring(4) } else { $fileLongPath }
         $fileInfo = [System.IO.FileInfo]$normalPath
 
+        # ─────────────────────────────────────────────────────────────────────
+        # MAGIC NUMBER / SIGNATURE CHECK
         # FIX (Bug 1+2): Rewrote magic-number detection using if/elseif chains instead
         # of 'switch -regex ($bytes)'. When PowerShell switch receives a [byte[]], it
         # iterates individual elements — so $_ inside each case was a single scalar byte,
@@ -134,6 +248,15 @@ $filesToProcess | ForEach-Object -Parallel {
         # for all files. Also fixed the ftyp/WEBP branches: the original used
         # '-join "" -match "ftyp"' which joins bytes as decimal integers (e.g.
         # "102116121112"), never matching ASCII text. Now uses GetString() to decode.
+        #
+        # Magic bytes checked (first 12 bytes of file):
+        #   FF D8           → JPEG
+        #   89 50           → PNG  (89 50 4E 47 0D 0A 1A 0A)
+        #   47 49           → GIF  (47 49 46 38)
+        #   49 49 / 4D 4D   → TIFF (little-endian / big-endian)
+        #   [4..7]='ftyp'   → ISO Base Media (MP4/MOV/HEIC) — brand at [8..11]
+        #   [8..11]='WEBP'  → WebP (RIFF container with WEBP chunk)
+        # ─────────────────────────────────────────────────────────────────────
         function Get-TrueExtension {
             param([byte[]]$bytes)
             if ($bytes[0] -eq 0xFF -and $bytes[1] -eq 0xD8)                       { return '.jpg'  }
@@ -143,22 +266,27 @@ $filesToProcess | ForEach-Object -Parallel {
                 ($bytes[0] -eq 0x4D -and $bytes[1] -eq 0x4D))                     { return '.tif'  }
             if ($bytes.Length -ge 12 -and
                 [Text.Encoding]::ASCII.GetString($bytes[4..7]) -eq 'ftyp') {
+                # ISO Base Media brand determines the specific container format.
+                # Trim() handles 'qt  ' (QuickTime brand padded with spaces).
                 $brand = [Text.Encoding]::ASCII.GetString($bytes[8..11]).Trim()
                 return switch ($brand) {
                     'heic'  { '.heic' }
-                    'mif1'  { '.heic' }
+                    'mif1'  { '.heic' }   # HEIF multi-image
                     'mp41'  { '.mp4'  }
                     'mp42'  { '.mp4'  }
-                    'qt  '  { '.mov'  }
-                    default { '.mp4'  }
+                    'qt  '  { '.mov'  }   # QuickTime (brand includes trailing spaces)
+                    default { '.mp4'  }   # Treat unknown ISO brands as MP4
                 }
             }
+            # WEBP: bytes 0-3 are 'RIFF', bytes 8-11 are 'WEBP'
             if ($bytes.Length -ge 12 -and
                 [Text.Encoding]::ASCII.GetString($bytes[8..11]) -eq 'WEBP')       { return '.webp' }
-            return $null
+            return $null   # Unknown format — skip signature check for this file
         }
 
-        # === Header read for signature check ===
+        # Read only the first 12 bytes — enough for all magic-number checks above.
+        # Use a try/catch so unreadable files (locked, zero-byte, etc.) are counted
+        # as failures and skipped rather than crashing the whole parallel run.
         $bytes = [byte[]]::new(12)
         try {
             $stream = $fileInfo.OpenRead()
@@ -170,9 +298,12 @@ $filesToProcess | ForEach-Object -Parallel {
             return
         }
 
-        $trueExt = Get-TrueExtension $bytes
+        $trueExt  = Get-TrueExtension $bytes
         $actualExt = $fileInfo.Extension.ToLower()
 
+        # Only act if we could identify the true format AND it differs from the
+        # current extension. If Get-TrueExtension returns $null (unknown format),
+        # we leave the extension alone rather than guess.
         if ($trueExt -and $actualExt -ne $trueExt) {
             $null = $processedCount.AddOrUpdate('SignatureMismatchCount', 1, { param($k, $v) $v + 1 })
             $newPath = [System.IO.Path]::ChangeExtension($fileInfo.FullName, $trueExt)
@@ -198,7 +329,21 @@ $filesToProcess | ForEach-Object -Parallel {
             }
         }
 
-        # === Timestamp extraction ===
+        # ─────────────────────────────────────────────────────────────────────
+        # TIMESTAMP EXTRACTION
+        # We collect up to four candidate dates and pick the oldest:
+        #   $dateTaken    — EXIF DateTimeOriginal / XMP DateTimeOriginal (images)
+        #   $mediaCreated — QuickTime:CreateDate in UTC, converted to local (videos)
+        #   $dateCreated  — NTFS CreationTime (always available, filesystem fallback)
+        #   $dateModified — NTFS LastWriteTime (always available, filesystem fallback)
+        #
+        # Using the oldest date as canonical "when was this captured" is intentional:
+        # copies and re-saves inflate the DateCreated/DateModified fields, but the
+        # original capture timestamp is usually the earliest of all available dates.
+        #
+        # exiftool is called without the 'EXIF:' group prefix (just -DateTimeOriginal)
+        # so that XMP:DateTimeOriginal and other non-EXIF embedded dates are also found.
+        # ─────────────────────────────────────────────────────────────────────
         $dateTaken    = $null
         $mediaCreated = $null
         $dateCreated  = $fileInfo.CreationTime.ToLocalTime()
@@ -206,6 +351,9 @@ $filesToProcess | ForEach-Object -Parallel {
         $isVideo      = $fileInfo.Extension -match '\.(qt|mpg|mp4|mov|avi|mkv|wmv)$'
 
         if ($isVideo) {
+            # QuickTimeUTC API tells exiftool to interpret QuickTime timestamps as UTC
+            # (the spec requires UTC but many cameras write local time). ToLocalTime()
+            # then converts the parsed UTC value to the system's local timezone.
             try {
                 $exifOut = & exiftool -api QuickTimeUTC -s -QuickTime:CreateDate "$normalPath"
                 if ($exifOut -match 'Create\s*Date\s*:\s*(\d{4}:\d{2}:\d{2} \d{2}:\d{2}:\d{2})') {
@@ -213,8 +361,9 @@ $filesToProcess | ForEach-Object -Parallel {
                 }
             } catch {}
         } else {
-            # Removed the 'EXIF:' group prefix so XMP and other metadata groups are
-            # also searched — broader coverage with no downside since exiftool is already required.
+            # No 'EXIF:' group prefix — searches EXIF, XMP, IPTC, and other groups.
+            # ParseExact with the exiftool date format (colons in date part) avoids
+            # locale-dependent parsing issues.
             try {
                 $exifOut = & exiftool -s -DateTimeOriginal "$normalPath"
                 if ($exifOut -match 'DateTimeOriginal\s*:\s*(\d{4}:\d{2}:\d{2} \d{2}:\d{2}:\d{2})') {
@@ -225,23 +374,40 @@ $filesToProcess | ForEach-Object -Parallel {
 
         # FIX (Bug 8): Removed Shell.Application COM fallback for reading DateTaken.
         # Shell.Application is STA-threaded; ForEach-Object -Parallel dispatches work on
-        # MTA thread-pool workers, causing a COM apartment mismatch. The exiftool call
-        # above (now without the EXIF: group restriction) covers the same metadata
-        # including XMP:DateTimeOriginal, making the COM fallback unnecessary.
+        # MTA thread-pool workers, causing a COM apartment mismatch that produces silent
+        # failures or RPC_E_WRONG_THREAD exceptions. The exiftool call above (without the
+        # EXIF: group restriction) covers the same metadata including XMP:DateTimeOriginal,
+        # making the COM fallback unnecessary.
 
-        # === Timestamp selection ===
+        # ─────────────────────────────────────────────────────────────────────
+        # TIMESTAMP SELECTION
+        # Build a list of all available dates, filter to confirmed [datetime]
+        # objects (guards against nulls), sort ascending, and take the first
+        # (oldest). $candidateDates always has at least $dateCreated and
+        # $dateModified from the filesystem, so $oldestDate is never null.
+        # ─────────────────────────────────────────────────────────────────────
         $candidateDates = @()
         if ($dateTaken)    { $candidateDates += $dateTaken }
         if ($mediaCreated) { $candidateDates += $mediaCreated }
         $candidateDates += $dateCreated, $dateModified
         $oldestDate = ($candidateDates | Where-Object { $_ -is [datetime] } | Sort-Object)[0]
 
+        # ─────────────────────────────────────────────────────────────────────
+        # PROVENANCE CLASSIFICATION
         # FIX (Bug 6): Rewrote provenance classification. The original conditions for
         # 'EXIF-only' and 'QuickTime-only' required -not $dateCreated -and -not $dateModified,
         # but those variables are always populated from the filesystem (never null/false),
         # so those two branches were permanently unreachable — every file with EXIF data
         # fell into 'Mixed-sources' instead. Classification now uses only the presence of
         # extracted metadata (dateTaken / mediaCreated) to determine the source type.
+        #
+        # Categories:
+        #   EXIF-only      — image with DateTimeOriginal, no QuickTime metadata
+        #   QuickTime-only — video with QuickTime:CreateDate, no EXIF
+        #   Mixed-sources  — both EXIF and QuickTime dates found (unusual)
+        #   Fallback-only  — no embedded metadata; using filesystem dates only
+        #   Unknown        — no dates at all (should not occur in practice)
+        # ─────────────────────────────────────────────────────────────────────
         $provenanceType = if ($dateTaken -and $mediaCreated) {
             'Mixed-sources'
         } elseif ($dateTaken) {
@@ -257,13 +423,20 @@ $filesToProcess | ForEach-Object -Parallel {
         $null = $processedCount.AddOrUpdate($provenanceType, 1, { param($k, $v) $v + 1 })
         $actions += "[Source] Provenance → $provenanceType"
 
-        # === Metadata write-back ===
+        # ─────────────────────────────────────────────────────────────────────
+        # METADATA WRITE-BACK
         # FIX (Bug 8 follow-on): Replaced Shell.Application COM write for DateTaken with
         # an exiftool call. COM objects are STA-threaded and must not be created in the
         # MTA thread-pool workers used by ForEach-Object -Parallel. Using exiftool is also
         # more reliable across file formats and has no 260-char path restriction.
+        #
+        # -overwrite_original: rewrites the file in-place without creating a backup (_original).
+        # Both DateTimeOriginal and CreateDate are set to ensure compatibility with apps
+        # that read one tag or the other (e.g. Windows Photos uses DateTimeOriginal,
+        # some Android apps prefer CreateDate).
+        # ─────────────────────────────────────────────────────────────────────
         if (-not $isVideo -and -not $dateTaken) {
-            $exifDate = $oldestDate.ToString('yyyy:MM:dd HH:mm:ss')
+            $exifDate = $oldestDate.ToString('yyyy:MM:dd HH:mm:ss')   # exiftool date format
             try {
                 if (-not $DryRun) {
                     & exiftool -overwrite_original "-DateTimeOriginal=$exifDate" "-CreateDate=$exifDate" "$normalPath" 2>&1 | Out-Null
@@ -275,19 +448,34 @@ $filesToProcess | ForEach-Object -Parallel {
             }
         }
 
+        # Set NTFS CreationTime to the canonical oldest date.
+        # FileInfo.CreationTime is writable in .NET on Windows — no shell or API needed.
         if ($dateCreated -ne $oldestDate) {
             if (-not $DryRun) { $fileInfo.CreationTime = $oldestDate }
             $actions += "$actionPrefix DateCreated to $($oldestDate.ToString('yyyy-MM-dd'))"
             $null = $processedCount.AddOrUpdate('DateCreatedSet', 1, { param($k, $v) $v + 1 })
         }
 
+        # Set NTFS LastWriteTime to the canonical oldest date.
         if ($dateModified -ne $oldestDate) {
             if (-not $DryRun) { $fileInfo.LastWriteTime = $oldestDate }
             $actions += "$actionPrefix DateModified to $($oldestDate.ToString('yyyy-MM-dd'))"
             $null = $processedCount.AddOrUpdate('DateModifiedSet', 1, { param($k, $v) $v + 1 })
         }
 
-        # === Rename file based on timestamp ===
+        # ─────────────────────────────────────────────────────────────────────
+        # TIMESTAMP-BASED RENAME
+        # Target name format: yyyyMMdd_HHmmss[.mmm].ext
+        # The millisecond component (.mmm) is included only when non-zero —
+        # this handles cameras that write sub-second precision in EXIF.
+        #
+        # Collision handling (FIX — Race condition):
+        # Replaced Test-Path + Move-Item with a try/catch retry loop.
+        # Test-Path is not atomic — two parallel threads could both pass the
+        # existence check and then collide on the rename. Catching IOException
+        # and incrementing the suffix counter (.001, .002, …) is race-safe
+        # because Move-Item itself will throw if the destination already exists.
+        # ─────────────────────────────────────────────────────────────────────
         $base = $oldestDate.ToString('yyyyMMdd_HHmmss')
         if ($oldestDate.Millisecond) {
             $base += '.' + $oldestDate.Millisecond.ToString('000')
@@ -300,14 +488,11 @@ $filesToProcess | ForEach-Object -Parallel {
             if ($DryRun) {
                 $actions += "Would rename → $($fileInfo.Name) → $newName"
             } else {
-                # FIX (Race condition): Replaced Test-Path + Move-Item with a try/catch
-                # retry loop. Test-Path is not atomic — two parallel threads could both
-                # pass the existence check and then collide on the rename. Catching
-                # IOException and incrementing the suffix counter is race-safe.
                 $count = 0
                 $moved = $false
                 while (-not $moved -and $count -le 999) {
                     if ($count -gt 0) {
+                        # Append a zero-padded suffix: 20230415_143022.001.jpg
                         $newName    = "${base}.$($count.ToString('000'))${ext}"
                         $targetPath = Join-Path $fileInfo.Directory.FullName $newName
                     }
@@ -315,8 +500,10 @@ $filesToProcess | ForEach-Object -Parallel {
                         Move-Item -LiteralPath $fileInfo.FullName -Destination $targetPath -ErrorAction Stop
                         $moved = $true
                     } catch [System.IO.IOException] {
+                        # Destination exists (collision) — increment suffix and retry.
                         $count++
                     } catch {
+                        # Any other error (permissions, path too long, etc.) — give up on this file.
                         $actions += "❌ Rename failed → $($fileInfo.Name): $($_.Exception.Message)"
                         $null = $processedCount.AddOrUpdate('Failed', 1, { param($k, $v) $v + 1 })
                         break
@@ -332,7 +519,13 @@ $filesToProcess | ForEach-Object -Parallel {
             }
         }
 
-        # === Progress output ===
+        # ─────────────────────────────────────────────────────────────────────
+        # PROGRESS OUTPUT
+        # The Mutex serialises console writes across all parallel runspaces.
+        # WaitOne() blocks until the mutex is acquired; ReleaseMutex() is in a
+        # finally block so it always runs, even if Write-Host throws.
+        # Color: Gray = skipped, Red = any failure, Green = normal processing.
+        # ─────────────────────────────────────────────────────────────────────
         $progressLock.WaitOne() | Out-Null
         try {
             $currentCount = $processedCount['Processed']
@@ -345,7 +538,9 @@ $filesToProcess | ForEach-Object -Parallel {
         } finally {
             $progressLock.ReleaseMutex() | Out-Null
         }
+
     } catch {
+        # Outer catch — handles any unexpected exception not caught by inner try blocks.
         $null = $processedCount.AddOrUpdate('Failed', 1, { param($k, $v) $v + 1 })
         $progressLock.WaitOne() | Out-Null
         try {
@@ -357,7 +552,9 @@ $filesToProcess | ForEach-Object -Parallel {
     }
 } -ThrottleLimit ([System.Environment]::ProcessorCount)
 
-# === Final summary ===
+# ─────────────────────────────────────────────────────────────────────────────
+# FINAL SUMMARY
+# ─────────────────────────────────────────────────────────────────────────────
 $endTime = Get-Date
 $elapsed = New-TimeSpan $startTime $endTime
 
