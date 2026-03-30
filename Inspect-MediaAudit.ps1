@@ -1,5 +1,6 @@
 # Inspect-MediaAudit.ps1
-# Copyright © 2025 Clive DSouza
+# Copyright © 2025-2026 Clive DSouza
+# SPDX-License-Identifier: MIT
 # Licensed under the MIT License — see LICENSE file in repo root
 
 #Requires -Version 7.0

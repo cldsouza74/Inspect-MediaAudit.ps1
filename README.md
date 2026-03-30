@@ -159,4 +159,4 @@ Multiple files share the same timestamp to the second (e.g. burst photos). Each 
 
 ## License
 
-MIT — see [LICENSE](LICENSE) for details.
+MIT © 2025-2026 Clive DSouza — see [LICENSE](LICENSE) for details.
