@@ -53,7 +53,7 @@ Reads capture dates from EXIF, QuickTime tags, and the filesystem. Picks the old
 
 - **No subprocess overhead:** `Image::ExifTool` is used as a direct Perl library — no `exiftool` process spawned per file
 - **FastScan mode:** `Image::ExifTool` stops reading after the first metadata block — 2-3× faster with no loss of capture-date accuracy
-- **Optional parallel processing:** `--jobs N` splits work across N worker processes via `Parallel::ForkManager`; gracefully falls back to single-threaded if the module is absent
+- **Optional parallel processing:** `--jobs N` splits work across N worker processes via `Parallel::ForkManager`; gracefully falls back to single-threaded if the module is absent; displays a live global `Overall: [XX.X%] (N/Total)` progress line updated every second
 - **Signature validation:** checks file extensions against actual content via magic-number analysis (JPEG, PNG, GIF, TIFF, MP4, MOV, HEIC, WebP)
 - **Metadata extraction:** reads capture dates from EXIF, XMP, QuickTime, and NTFS filesystem timestamps
 - **Date sanity filtering:** rejects corrupt EXIF dates (before 1970 or more than 5 years in the future) before selecting the canonical timestamp
@@ -254,6 +254,12 @@ Each processed file prints one progress line:
 | Green | Normal processing |
 | Red | One or more failures on this file |
 | Gray | File skipped |
+
+In parallel mode (`--jobs N`), per-file lines are prefixed with `[J1]`, `[J2]`, etc. and may arrive out of file order. A separate global progress line is printed to stderr and updated every second:
+
+```
+  Overall: [ 42.3%] (17450/41385)
+```
 
 The final summary shows totals for every counter including per-provenance breakdowns.
 
