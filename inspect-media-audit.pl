@@ -1,5 +1,5 @@
 #!/usr/bin/env perl
-# inspect-media-audit.pl — v1.1.0
+# inspect-media-audit.pl — v1.1.1
 # Copyright © 2025-2026 Clive DSouza
 # SPDX-License-Identifier: MIT
 #
@@ -175,6 +175,7 @@ my $total_count = 0;
 if ($opt_recurse) {
     find(sub {
         return unless -f $_;
+        return if /^\./;   # skip hidden files — consistent with non-recursive mode
         $total_count++;
         my ($ext) = /(\.[^.]+)$/;
         push @files_to_process, $File::Find::name
@@ -659,8 +660,8 @@ sub _detect_true_ext {
 
     # JPEG: FF D8
     return '.jpg'  if substr($buf,0,2) eq "\xFF\xD8";
-    # PNG:  89 50 4E 47
-    return '.png'  if substr($buf,0,2) eq "\x89\x50";
+    # PNG:  89 50 4E 47 0D 0A 1A 0A — check all 4 distinctive bytes
+    return '.png'  if substr($buf,0,4) eq "\x89PNG";
     # GIF:  47 49 46 38
     return '.gif'  if substr($buf,0,2) eq "\x47\x49";
     # TIFF: 49 49 (LE) or 4D 4D (BE)
@@ -723,8 +724,11 @@ sub _set_win32_birthtime {
         $lo = $ft & 0xFFFF_FFFF;
         $hi = ($ft >> 32) & 0xFFFF_FFFF;
     }
-    my $ft_bytes  = pack('VV', $lo, $hi);   # little-endian FILETIME struct
-    my $null_time = "\x00" x 8;             # NULL FILETIME — leave this timestamp unchanged
+    my $ft_bytes = pack('VV', $lo, $hi);   # little-endian FILETIME struct
+    # Pass 0 (not a byte string) for timestamps we do not want to change.
+    # Win32::API treats a false/zero value for a 'P' parameter as a NULL pointer.
+    # Passing "\x00" x 8 would be a pointer to a zero FILETIME (1601-01-01),
+    # which would incorrectly reset LastAccessTime and LastWriteTime.
 
     # CreateFileW requires a UTF-16LE wide string with a null terminator.
     # The Win32::API 'P' type passes a pointer to the string data.
@@ -753,7 +757,7 @@ sub _set_win32_birthtime {
     # SetFileTime(handle, lpCreationTime, lpLastAccessTime, lpLastWriteTime)
     # Pass ft_bytes for creation time; null_time (NULL) for the others so they
     # are left unchanged — we already set mtime via utime() above.
-    my $ok  = $fn_SetFileTime->Call($handle, $ft_bytes, $null_time, $null_time);
+    my $ok  = $fn_SetFileTime->Call($handle, $ft_bytes, 0, 0);
     my $err = $^E;
     $fn_CloseHandle->Call($handle);
 
