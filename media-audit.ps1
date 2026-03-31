@@ -4,6 +4,8 @@
 # Licensed under the MIT License — see LICENSE file in repo root
 
 #Requires -Version 7.0
+
+$VERSION = (Get-Content "$PSScriptRoot\VERSION" -Raw).Trim()
 <#
 ╔══════════════════════════════════════════════════════════════════════════════════╗
 ║                              media-audit.ps1                                      ║
@@ -825,7 +827,7 @@ $elapsed = New-TimeSpan $startTime $endTime
 # argument parser treats "`n", "+", and ('═' * 50) as three separate positional values,
 # printing a literal " + " between them rather than concatenating into one string.
 Write-Host ("`n" + ('═' * 50)) -ForegroundColor Cyan
-Write-Host ("{0,-30}: {1}" -f "Script",              "media-audit.ps1 v1.2.1")
+Write-Host ("{0,-30}: {1}" -f "Script",              "media-audit.ps1 v$VERSION")
 Write-Host ("{0,-30}: {1}" -f "Runtime",             $elapsed.ToString('hh\:mm\:ss'))
 if ($DryRun) {
     Write-Host "DRY RUN SUMMARY — No changes applied" -ForegroundColor Yellow

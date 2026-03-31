@@ -1,5 +1,5 @@
 #!/usr/bin/env perl
-# media-audit.pl — v1.2.0
+# media-audit.pl — see VERSION file for current version
 # Copyright © 2025-2026 Clive DSouza
 # SPDX-License-Identifier: MIT
 #
@@ -43,10 +43,17 @@ use strict;
 use warnings;
 use 5.016;
 
+use FindBin      qw($Bin);
 use Getopt::Long qw(GetOptions :config no_ignore_case);
 use File::Find   qw(find);
 use File::Basename qw(basename dirname fileparse);
 use File::Spec;
+
+my $VERSION = do {
+    open my $fh, '<', "$Bin/VERSION" or die "Cannot read VERSION file: $!";
+    chomp(my $v = <$fh>);
+    $v
+};
 use File::Copy   qw(copy);
 use File::Temp   qw(tempfile);
 use POSIX        qw(strftime);
@@ -551,7 +558,7 @@ my $elapsed_str = sprintf('%02d:%02d:%02d',
     int($elapsed / 3600), int(($elapsed % 3600) / 60), $elapsed % 60);
 
 print _cyan("\n" . ('═' x 50) . "\n");
-printf "%-32s: %s\n", 'Script',                      'media-audit.pl v1.2.2';
+printf "%-32s: %s\n", 'Script',                      "media-audit.pl v$VERSION";
 printf "%-32s: %s\n", 'Runtime',                     $elapsed_str;
 print  _yellow("DRY RUN — no changes applied\n") if $opt_dry_run;
 print  _cyan('─' x 50 . "\n");

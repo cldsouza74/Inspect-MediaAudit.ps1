@@ -1,5 +1,5 @@
 #!/usr/bin/env perl
-# sort-by-year.pl — v1.3.0
+# sort-by-year.pl — see VERSION file for current version
 # Copyright © 2025-2026 Clive DSouza
 # SPDX-License-Identifier: MIT
 # Licensed under the MIT License — see LICENSE file in repo root
@@ -20,12 +20,19 @@ use strict;
 use warnings;
 use 5.016;
 
+use FindBin      qw($Bin);
 use Getopt::Long qw(GetOptions :config no_ignore_case);
 use File::Find   qw(find);
 use File::Basename qw(basename);
 use File::Spec;
 use File::Path   qw(make_path);
 use POSIX        qw(floor);
+
+my $VERSION = do {
+    open my $fh, '<', "$Bin/VERSION" or die "Cannot read VERSION file: $!";
+    chomp(my $v = <$fh>);
+    $v
+};
 
 # ─── ANSI colour helpers ─────────────────────────────────────────────────────
 sub _red    { "\e[31m$_[0]\e[0m" }
@@ -241,7 +248,7 @@ my $rate      = ($elapsed > 0 && $moved > 0)
                 : 'N/A';
 
 print _cyan("\n" . ('═' x 50) . "\n");
-printf "%-24s: %s\n", 'Script',            'sort-by-year.pl v1.3.1';
+printf "%-24s: %s\n", 'Script',            "sort-by-year.pl v$VERSION";
 printf "%-24s: %s\n", 'Runtime',           $runtime;
 print _yellow("DRY RUN — no files were moved\n") if $opt_dry_run;
 print _cyan('─' x 50 . "\n");
