@@ -83,21 +83,42 @@ The tool ships as two scripts that do the same job — pick the one that fits yo
 
 ---
 
+## Installation
+
+### Linux / macOS / WSL — one command
+
+```bash
+git clone https://github.com/cldsouza74/media-audit.git
+cd media-audit
+./install.sh
+```
+
+The installer checks your Perl version, installs all dependencies, copies the scripts to `~/bin`, and verifies the install. Use `./install.sh --system` to install to `/usr/local/bin` (requires sudo).
+
+### Windows — one command
+
+```powershell
+git clone https://github.com/cldsouza74/media-audit.git
+cd media-audit
+.\Install.ps1
+```
+
+Checks PowerShell 7+, exiftool, and Perl (Strawberry Perl). Installs dependencies and adds scripts to your PATH.
+
+---
+
 ## Quick Start
 
 ### PowerShell (Windows)
 
 ```powershell
-# 1. Install ExifTool — https://exiftool.org — and verify:
-exiftool -ver
-
-# 2. Preview what would change (nothing is modified):
+# Preview what would change (nothing is modified):
 .\media-audit.ps1 -Path "D:\Pictures" -DryRun -Recurse
 
-# 3. Apply fixes:
+# Apply fixes:
 .\media-audit.ps1 -Path "D:\Pictures" -Recurse
 
-# 4. Fix + remove exact duplicates:
+# Fix + remove exact duplicates:
 .\media-audit.ps1 -Path "D:\Pictures" -Recurse -Dedup
 ```
 
@@ -106,18 +127,14 @@ exiftool -ver
 ### Perl (Windows / Linux / macOS / WSL)
 
 ```bash
-# 1. Install dependencies:
-cpan Image::ExifTool
-cpan Parallel::ForkManager   # optional — needed for --jobs N
+# Preview what would change (nothing is modified):
+media-audit --path /media/photos --dry-run --recurse
 
-# 2. Preview what would change (nothing is modified):
-perl media-audit.pl --path /media/photos --dry-run --recurse
+# Apply fixes using 4 parallel workers:
+media-audit --path /media/photos --recurse --jobs 4
 
-# 3. Apply fixes using 4 parallel workers:
-perl media-audit.pl --path /media/photos --recurse --jobs 4
-
-# 4. Fix + remove exact duplicates:
-perl media-audit.pl --path /media/photos --recurse --jobs 4 --dedup
+# Fix + remove exact duplicates:
+media-audit --path /media/photos --recurse --jobs 4 --dedup
 ```
 
 → Full Perl docs: [README-perl.md](README-perl.md)
@@ -155,12 +172,12 @@ The final summary shows totals for every counter — files processed, metadata w
 
 See [CHANGELOG.md](CHANGELOG.md) for the full version history.
 
-**v1.2.0 highlights:**
-- Both scripts now at full feature parity
-- Size-bucketed SHA256 deduplication (`--dedup` / `-Dedup`)
-- `FastScan` / `-fast` on all metadata reads — 2–3× faster
-- MAX_SANE extended from 1 day to 5 years — eliminates false "date out of range" warnings
-- Missing-file skip — interrupted runs no longer produce false failures
+**v1.4.0 highlights:**
+- One-command installers — `./install.sh` (Linux/macOS/WSL) and `.\Install.ps1` (Windows)
+- 41-test suite covering signature detection, date extraction, rename, dedup, sort, and failure handling
+- GitHub Actions CI — tests run on every push across Ubuntu and macOS
+- Single `VERSION` file — all scripts read version from one place, no more drift
+- `cpanfile` — `cpanm --installdeps .` installs all dependencies in one step
 
 ---
 
@@ -273,3 +290,8 @@ Multiple files share the same timestamp to the second (e.g. burst photos). Expec
 ## License
 
 MIT © 2025-2026 Clive DSouza — see [LICENSE](LICENSE) for details.
+
+---
+
+Built by **Clive DSouza** — engineer, PM, and manager. Open to new roles.
+[LinkedIn](https://linkedin.com/in/clivedsouza) · clive@clivedsouza.com

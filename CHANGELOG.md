@@ -7,6 +7,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.4.0] - 2026-03-31
+
+### Added
+- **`install.sh`** — one-command installer for Linux, macOS, and WSL. Checks Perl
+  version, installs cpanm if missing, runs `cpanm --installdeps .`, copies scripts
+  and `VERSION` to `~/bin` (or `/usr/local/bin` with `--system`), updates PATH in
+  `.bashrc`/`.zshrc`, and verifies the install before exit.
+- **`Install.ps1`** — one-command installer for Windows (PowerShell 7+). Checks PS
+  version, exiftool, and Perl; installs CPAN dependencies; copies scripts to `~/bin`
+  or `C:\tools\media-audit` with `-System`; adds install dir to user or system PATH.
+- **Test suite** — 41 tests across 6 files covering: magic-number signature detection,
+  EXIF date extraction and sanity filtering, canonical rename and collision suffixing,
+  SHA256 deduplication, year-folder sorting, and failure handling regressions. All
+  tests run in temp directories — no fixture files modified.
+- **`t/fixtures/`** — 8 binary fixture files committed to the repo: valid JPEG with
+  EXIF, PNG with wrong extension, no-metadata JPEG, future-date EXIF, corrupt-date
+  EXIF (year 0001), duplicate pair, and a pre-canonical file.
+- **GitHub Actions CI** — runs `prove -lr t/` on ubuntu-latest and macos-latest on
+  every push and pull request to main.
+- **`cpanfile`** — formal dependency manifest. `cpanm --installdeps .` installs all
+  required and optional modules. Web UI deps gated behind `feature 'web'`.
+
+### Changed
+- **Single `VERSION` file** — version number moved from hardcoded strings in each
+  script to a single `VERSION` file at the repo root. All three scripts read it at
+  startup via `FindBin`. Bumping the version now requires editing one file.
+- **`install.sh` copies `VERSION`** alongside scripts so `FindBin` resolves correctly
+  when scripts are run from `~/bin` after installation.
+
+---
+
 ## [1.3.2] - 2026-03-31
 
 ### Changed — all scripts
