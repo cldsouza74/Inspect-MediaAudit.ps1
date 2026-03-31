@@ -40,8 +40,11 @@
 
 TROUBLESHOOTING GUIDE
 ─────────────────────
-Problem: "exiftool is not recognized"
+Problem: Script exits immediately with "❌ exiftool not found on PATH"
   Cause : exiftool.exe is not on the system PATH.
+  Note  : The script checks for exiftool automatically on startup and exits with
+          this message rather than running to completion while silently failing
+          every metadata read and write (original behaviour prior to v1.1.1).
   Fix   : Download from https://exiftool.org, place exiftool.exe somewhere on PATH,
           then verify with: exiftool -ver
 
@@ -698,21 +701,30 @@ SUPPORTED FORMATS:
     .jfif, .mpg
 
 FEATURES:
-    • Header signature check via magic number analysis
+    • ExifTool pre-flight: verifies exiftool is on PATH at startup — exits immediately
+      with a clear message if not found, rather than silently failing every file
+    • Header signature check via magic number analysis (JPEG, PNG, GIF, TIFF, MP4,
+      MOV, HEIC, WebP — reads first 12 bytes; does not rely on extension)
     • Renaming files when extension doesn't match actual content
-    • Metadata extraction via ExifTool (EXIF, QuickTime, XMP, NTFS)
+    • Metadata extraction via ExifTool (EXIF, QuickTime, XMP, NTFS filesystem dates)
+    • Date sanity filtering: rejects dates before 1970-01-01 or after tomorrow as
+      likely corrupt (camera bugs, unset clocks); logs a warning and falls back to
+      raw oldest if no sane date exists — prevents filenames like 00010101_000000.jpg
     • Selection of oldest valid timestamp as canonical "DateTaken"
-    • Corrections to DateCreated and LastWriteTime
+    • Corrections to DateTimeOriginal (via exiftool), CreationTime, and LastWriteTime
     • File rename using timestamp format (yyyyMMdd_HHmmss.ext)
-    • Suffix logic for timestamp collisions (.001, .002, …)
-    • Provenance tagging: EXIF-only, QuickTime-only, Fallback-only, Mixed-sources, etc.
-    • Thread-safe counters and color-coded progress output
-    • Detailed summary report upon completion
+    • Race-safe suffix logic for timestamp collisions (.001, .002, … .999); exhaustion
+      is logged as a failure rather than silently skipped
+    • Provenance tagging: EXIF-only, QuickTime-only, Fallback-only, Mixed-sources
+    • Thread-safe counters (ConcurrentDictionary) and mutex-serialised console output
+    • Detailed summary report with per-provenance breakdowns on completion
 
 NOTES:
     • Requires PowerShell 7+
-    • Ensure ExifTool is in PATH for accurate metadata extraction
+    • ExifTool check is automatic on startup — the script will not process any files
+      if exiftool is missing; no manual PATH check needed
     • Use -DryRun mode for safe simulation (no writes or renames)
+    • Always back up your media before running bulk fixes on an important library
 
 EXAMPLE:
     .\Inspect-MediaAudit.ps1 -Path "D:\Pictures" -DryRun -Recurse

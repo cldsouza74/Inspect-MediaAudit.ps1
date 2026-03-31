@@ -34,28 +34,37 @@ Every photo and video carries hidden date information ("when was this taken?"). 
 
 ---
 
-## What's New in v1.1.0
+## What's New in v1.1.1
 
-- **Signature detection now actually works** — the magic-number check was silently disabled due to a PowerShell `switch`/array iteration bug; rewritten with `if/elseif` chains.
-- **EXIF/QuickTime/XMP date extraction broadened** — removed the `EXIF:` group restriction so XMP-embedded dates are also found.
-- **DateTaken write-back now uses exiftool** — the previous Shell.Application COM approach caused threading errors in parallel execution and has been replaced.
-- **Provenance stats are now accurate** — EXIF-only and QuickTime-only categories were previously unreachable due to a logic bug; now correctly classified.
-- **Parallel rename collisions are race-safe** — replaced the non-atomic `Test-Path` check with a `try/catch IOException` retry loop.
-- **Stale file path bug fixed** — after a signature rename, subsequent operations now target the correct (new) filename.
+Eleven hardening fixes making the script robust against real-world failure conditions:
 
-See [CHANGELOG.md](CHANGELOG.md) for full details.
+- **ExifTool pre-flight check** — script now exits immediately with a clear message if `exiftool` is not on PATH, instead of silently failing on every file.
+- **Empty folder guard** — exits cleanly with a warning if no supported files are found, preventing a divide-by-zero crash.
+- **File stream handle leak fixed** — stream disposal moved into a `finally` block so file handles are always released, even on read errors.
+- **QuickTime MOV detection fixed** — `.Trim()` was applied to the ISO brand before comparing against `'qt  '` (untrimed), so QuickTime files were always detected as MP4. Fixed.
+- **ExifTool exit code now checked** — write failures were previously counted as success. `$LASTEXITCODE` is now verified after every exiftool write.
+- **Error handler crash fixed** — the outer catch block referenced `$fileInfo` before it was assigned; now falls back to the raw file path safely.
+- **`ConvertTo-LongPath` wildcard bug fixed** — `-like '\\?\\*'` used `?` as a wildcard (matching any character), not a literal `?`. Changed to `.StartsWith()`.
+- **Timestamp assignment protected** — `CreationTime` and `LastWriteTime` writes are now wrapped in try/catch; previously threw unhandled exceptions on read-only files.
+- **Rename suffix exhaustion now logged** — when all 999 collision suffixes were exhausted, the file was silently skipped. Now logged as a failure.
+- **Mutex properly disposed** — the OS-level Mutex is now released after the parallel block completes.
+- **Date sanity bounds** — corrupt EXIF dates (year `0001`, `9999`, etc.) are now excluded from timestamp selection. Dates before 1970 or after tomorrow are rejected with a visible warning.
+
+See [CHANGELOG.md](CHANGELOG.md) for the complete history including v1.1.0 fixes.
 
 ---
 
 ## Features
 
+- **ExifTool pre-flight:** Verifies `exiftool` is on PATH before processing any files — fails fast with a clear message rather than silently failing thousands of files.
 - **Signature validation:** Checks file extensions against actual content via magic-number analysis (JPEG, PNG, GIF, TIFF, MP4, MOV, HEIC, WebP).
 - **Metadata extraction:** Reads capture dates from EXIF, XMP, QuickTime, and NTFS filesystem timestamps.
+- **Date sanity filtering:** Rejects corrupt EXIF dates (before 1970 or in the future) before selecting the canonical timestamp.
 - **Timestamp correction:** Sets `DateTimeOriginal`, `CreationTime`, and `LastWriteTime` to the oldest valid timestamp found.
-- **Automatic renaming:** Renames files to `yyyyMMdd_HHmmss.ext` based on canonical timestamp, with collision-safe suffixing (`.001`, `.002`, …).
+- **Automatic renaming:** Renames files to `yyyyMMdd_HHmmss.ext` based on canonical timestamp, with race-safe collision suffixing (`.001`, `.002`, …).
 - **Provenance tagging:** Classifies metadata source per file — EXIF-only, QuickTime-only, Fallback-only, Mixed-sources, Unknown.
 - **Dry run mode:** Simulates all actions and reports what would change — no files are written or renamed.
-- **Parallel processing:** Uses all logical CPU cores via `ForEach-Object -Parallel` with thread-safe counters.
+- **Parallel processing:** Uses all logical CPU cores via `ForEach-Object -Parallel` with thread-safe counters and proper resource cleanup.
 - **Comprehensive reporting:** Color-coded progress output and a detailed summary on completion.
 
 ---
@@ -77,19 +86,17 @@ Ideal for photographers, archivists, and IT professionals managing large or mess
 ## Requirements
 
 - **Windows** — uses Windows NTFS file attributes for timestamp correction
-- **PowerShell 7.0 or higher**
-  [Download PowerShell 7+](https://github.com/PowerShell/PowerShell/releases)
-- **ExifTool** — required for all metadata reads and writes
-  [Download ExifTool](https://exiftool.org/)
+- **PowerShell 7.0 or higher** — [Download PowerShell 7+](https://github.com/PowerShell/PowerShell/releases)
+- **ExifTool** — required for all metadata reads and writes — [Download ExifTool](https://exiftool.org/)
 
-> **Verify ExifTool is on your PATH** by running `exiftool -ver` in a PowerShell window before using this script.
+> The script checks for ExifTool automatically on startup and exits with a clear error if it is not found. To verify manually: `exiftool -ver`
 
 ---
 
 ## Usage
 
 ```powershell
-# Preview all changes without modifying any files (always do this first):
+# Always preview first — no files are changed with -DryRun:
 .\Inspect-MediaAudit.ps1 -Path "D:\Pictures" -DryRun -Recurse
 
 # Apply changes to top-level folder only:
@@ -101,19 +108,19 @@ Ideal for photographers, archivists, and IT professionals managing large or mess
 
 ### Parameters
 
-| Parameter | Required | Description |
-|-----------|----------|-------------|
-| `-Path`   | Yes | Root folder containing media files |
-| `-DryRun` | No  | Preview actions — no files written or renamed |
-| `-Recurse`| No  | Scan all subdirectories recursively |
+| Parameter  | Required | Description |
+|------------|----------|-------------|
+| `-Path`    | Yes | Root folder containing media files |
+| `-DryRun`  | No  | Preview actions — no files written or renamed |
+| `-Recurse` | No  | Scan all subdirectories recursively |
 
 ### Supported Formats
 
-| Type | Extensions |
-|------|-----------|
+| Type   | Extensions |
+|--------|-----------|
 | Images | `.jpg` `.jpeg` `.png` `.gif` `.bmp` `.tif` `.tiff` `.heic` `.webp` `.jfif` |
-| Raw | `.nef` `.cr2` `.dng` `.crw` |
-| Video | `.mov` `.mp4` `.avi` `.mkv` `.wmv` `.qt` `.mpg` |
+| Raw    | `.nef` `.cr2` `.dng` `.crw` |
+| Video  | `.mov` `.mp4` `.avi` `.mkv` `.wmv` `.qt` `.mpg` |
 
 ---
 
@@ -121,44 +128,53 @@ Ideal for photographers, archivists, and IT professionals managing large or mess
 
 For each media file the script:
 
-1. **Reads the first 12 bytes** and compares the magic number against known format signatures to detect extension mismatches.
-2. **Renames the file** if the extension doesn't match the actual format (e.g. `.jpg` file that is actually a PNG).
-3. **Extracts timestamps** from EXIF/XMP (`DateTimeOriginal`) for images, or `QuickTime:CreateDate` for videos, with NTFS filesystem dates as fallback.
-4. **Selects the oldest** of all available dates as the canonical capture timestamp.
-5. **Writes `DateTimeOriginal`** back into the file via exiftool (images without an existing timestamp only).
-6. **Corrects `CreationTime`** and `LastWriteTime` on the filesystem to match.
-7. **Renames the file** to `yyyyMMdd_HHmmss.ext` (e.g. `20231225_143022.jpg`). Collisions get a numeric suffix: `20231225_143022.001.jpg`.
-8. **Tags the provenance** of the chosen timestamp (EXIF-only, QuickTime-only, Fallback-only, Mixed-sources).
+1. **Pre-flight check** — verifies `exiftool` is on PATH; exits immediately with instructions if not.
+2. **Reads the first 12 bytes** and compares the magic number against known format signatures to detect extension mismatches.
+3. **Renames the file** if the extension doesn't match the actual format (e.g. a `.jpg` file that is actually a PNG).
+4. **Extracts timestamps** from EXIF/XMP (`DateTimeOriginal`) for images, or `QuickTime:CreateDate` for videos, with NTFS filesystem dates as fallback.
+5. **Filters out implausible dates** — any date before 1970 or after tomorrow is rejected as likely corrupt, with a warning in the output.
+6. **Selects the oldest** of all remaining valid dates as the canonical capture timestamp.
+7. **Writes `DateTimeOriginal`** back into the file via exiftool (images without an existing timestamp only). Exit code is verified.
+8. **Corrects `CreationTime`** and `LastWriteTime` on the filesystem to match.
+9. **Renames the file** to `yyyyMMdd_HHmmss.ext` (e.g. `20231225_143022.jpg`). Collisions get a numeric suffix: `20231225_143022.001.jpg`.
+10. **Tags the provenance** of the chosen timestamp (EXIF-only, QuickTime-only, Fallback-only, Mixed-sources).
 
 ---
 
 ## Reading the Output
 
-Each processed file prints one line:
+Each processed file prints one progress line:
 
 ```
 [ 12.5%] (125/1000) [Source] Provenance → EXIF-only; Fixed DateCreated to 2023-12-25; Renamed → IMG_0042.jpg → 20231225_143022.jpg - IMG_0042.jpg
 ```
 
-Colors: **Green** = normal, **Red** = failure, **Gray** = skipped.
+| Color | Meaning |
+|-------|---------|
+| Green | Normal processing |
+| Red   | One or more failures on this file |
+| Gray  | File skipped |
 
-The final summary shows totals for every counter including per-provenance breakdowns.
+The final summary shows totals for every counter including per-provenance breakdowns and a full failure count.
 
 ---
 
 ## Troubleshooting
 
-**"exiftool is not recognized"**
-ExifTool is not on your PATH. Download from [exiftool.org](https://exiftool.org), place `exiftool.exe` in a folder on your PATH, then verify: `exiftool -ver`.
+**Script exits immediately with "exiftool not found"**
+ExifTool is not on your PATH. Download from [exiftool.org](https://exiftool.org), place `exiftool.exe` in a folder on your PATH, then verify with `exiftool -ver`. The script checks for this automatically before touching any files.
 
 **"Path not found" on launch**
-The `-Path` argument doesn't exist. Verify with: `Test-Path "D:\YourFolder"`.
+The `-Path` argument doesn't exist or is mis-typed. Verify with: `Test-Path "D:\YourFolder"`.
 
-**0 files processed**
-Check that your files use supported extensions (listed above). The script lowercases extensions before comparing, so casing is not an issue.
+**0 files processed — "No supported media files found"**
+No files in the folder match the supported extensions. The script lowercases extensions before comparing, so casing is not an issue. Check that your files are one of the supported formats listed above.
 
-**DateTaken not being written**
-ExifTool could not write to the file — it may be read-only, open in another app, or an unsupported raw format. Check the Failures counter and the red lines in output for per-file errors.
+**DateTaken not being written / failures on write**
+ExifTool could not write to the file — it may be read-only, open in another app, or in an unsupported raw format. Red lines in the output show per-file error messages. Check the Failures counter in the summary.
+
+**Files show a warning "All dates outside sane range"**
+The file has corrupt or missing EXIF dates (e.g. year 0001 or 9999 from a faulty camera). The script falls back to the raw oldest date available and logs a warning. The file is still processed.
 
 **Most files show "Fallback-only" provenance**
 Files have no embedded EXIF or QuickTime metadata — common with screenshots and downloaded images. The script still normalises filesystem timestamps correctly.
@@ -166,13 +182,16 @@ Files have no embedded EXIF or QuickTime metadata — common with screenshots an
 **Many files getting `.001`, `.002` suffixes**
 Multiple files share the same timestamp to the second (e.g. burst photos). Each unique second gets one file; collisions get a suffix. This is expected behaviour.
 
+**CreationTime or LastWriteTime not being set**
+The file is read-only or you lack write permission. Red lines in the output show the specific error. Check file permissions.
+
 ---
 
 ## Notes & Recommendations
 
 - **Always run `-DryRun` first** to preview changes before any files are modified.
 - **Back up your media** before running bulk fixes on an important library.
-- **ExifTool is required** — without it, metadata reads and writes will not work.
+- **ExifTool is required** — the script will not start without it.
 
 ---
 
