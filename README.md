@@ -294,4 +294,4 @@ MIT © 2025-2026 Clive DSouza — see [LICENSE](LICENSE) for details.
 ---
 
 Built by **Clive DSouza** — engineer, PM, and manager. Open to new roles.
-[LinkedIn](https://www.linkedin.com/in/clive-dsouza-b8734212/) · clive@clivedsouza.com
+[LinkedIn](https://www.linkedin.com/in/clive-dsouza-b8734212/) · cldsouza@clivedsouza.com
