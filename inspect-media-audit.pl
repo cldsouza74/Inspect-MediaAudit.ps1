@@ -1,5 +1,5 @@
 #!/usr/bin/env perl
-# inspect-media-audit.pl — v1.0.0
+# inspect-media-audit.pl — v1.1.0
 # Copyright © 2025-2026 Clive DSouza
 # SPDX-License-Identifier: MIT
 #
@@ -9,17 +9,32 @@
 # REQUIREMENTS
 #   Image::ExifTool  — cpan install Image::ExifTool
 #                      or: apt install libimage-exiftool-perl
+#   Digest::SHA      — core Perl module (included since Perl 5.10) — used for dedup
 #   Win32::API       — Windows native only, for CreationTime (birthtime) support
 #                      cpan install Win32::API
 #                      Not needed on Linux/WSL (birthtime is not settable there)
 #
 # USAGE
-#   perl inspect-media-audit.pl --path /path/to/photos [--dry-run] [--recurse]
+#   perl inspect-media-audit.pl --path /path/to/photos [--dry-run] [--recurse] [--dedup]
 #
 # PLATFORM NOTES
 #   Windows native Perl : full functionality including CreationTime correction
 #   WSL / Linux         : all features except CreationTime (no Win32 API available)
 #                         mtime (LastWriteTime) is still corrected via utime()
+#
+# DEDUPLICATION NOTES
+#   --dedup runs after all renaming is complete (Step 10). This is intentional:
+#   files are compared by SHA256 checksum of their full content — name and metadata
+#   are irrelevant. Running after rename means duplicates that previously had
+#   different names are now normalized and easier to identify in the output.
+#
+#   Keeper selection within each duplicate group (best to worst priority):
+#     1. Richest provenance: EXIF-only / QuickTime-only > Mixed-sources > Fallback-only
+#     2. Shortest filename (no .001 suffix = arrived first in the rename loop)
+#     3. Alphabetically first path (tiebreak)
+#
+#   --dedup --dry-run reports all duplicate groups and what would be deleted
+#   without removing any files. Always preview before applying.
 
 use strict;
 use warnings;
@@ -34,6 +49,13 @@ use File::Temp   qw(tempfile);
 use POSIX        qw(strftime);
 use Time::Local  qw(timelocal timegm);
 use Encode       qw(encode);
+
+# ─── Digest::SHA (core module — required for --dedup) ────────────────────────
+# Digest::SHA ships with Perl 5.10+ and is available on all platforms.
+# We load it here so a missing module fails immediately rather than mid-run.
+eval { require Digest::SHA; 1 }
+    or die "❌ Digest::SHA not found (should be a core Perl module).\n"
+         . "   Try: cpan Digest::SHA\n";
 
 # ─── Image::ExifTool (required) ──────────────────────────────────────────────
 eval { require Image::ExifTool; 1 }
@@ -107,13 +129,14 @@ my %VALID_EXT = map { $_ => 1 } qw(
 my %VIDEO_EXT = map { $_ => 1 } qw(.mov .mp4 .avi .mkv .wmv .qt .mpg);
 
 # ─── Argument parsing ────────────────────────────────────────────────────────
-my ($opt_path, $opt_dry_run, $opt_recurse, $opt_help);
+my ($opt_path, $opt_dry_run, $opt_recurse, $opt_dedup, $opt_help);
 GetOptions(
     'path=s'   => \$opt_path,
     'dry-run'  => \$opt_dry_run,
     'recurse'  => \$opt_recurse,
+    'dedup'    => \$opt_dedup,
     'help'     => \$opt_help,
-) or die "Usage: $0 --path <dir> [--dry-run] [--recurse]\n";
+) or die "Usage: $0 --path <dir> [--dry-run] [--recurse] [--dedup]\n";
 
 if ($opt_help) {
     print <<'USAGE';
@@ -124,8 +147,9 @@ USAGE:
 
 OPTIONS:
   --path <dir>   Root folder containing media files (required)
-  --dry-run      Preview all actions without writing or renaming any files
+  --dry-run      Preview all actions without writing, renaming, or deleting any files
   --recurse      Scan all subdirectories recursively
+  --dedup        After processing, find and remove duplicate files by SHA256 checksum
 
 SUPPORTED FORMATS:
   Images : .jpg .jpeg .png .gif .bmp .tif .tiff .heic .webp .jfif
@@ -191,7 +215,12 @@ my %C = map { $_ => 0 } qw(
     SignatureMismatch  SignatureRenamed  Skipped  Failed
     Renamed  WithCounter
     EXIF-only  QuickTime-only  Fallback-only  Mixed-sources  Unknown
+    DuplicateGroups  DuplicatesRemoved  BytesFreed
 );
+
+# Tracks final path + provenance for each successfully processed file.
+# Populated during the main loop; consumed by the dedup phase.
+my @processed_files;
 
 # Progress: always print first 10 files, then every ~1% (min 1, capped at 100)
 my $report_every = $filtered_count <= 10 ? 1
@@ -474,6 +503,108 @@ for my $filepath (@files_to_process) {
     # ── STEP 9: Progress output ───────────────────────────────────────────
     _print_line($pct, $file_index, $filtered_count, \@actions, $filename, $failed)
         if $file_index <= 10 || $file_index % $report_every == 0;
+
+    # ── STEP 10 (prep): Record final path for dedup phase ────────────────
+    # $filepath holds the current path after any extension or timestamp rename.
+    # $provenance is always set by Step 4 — files that next'd before Step 4
+    # (no valid date) are not tracked and will not be checksummed.
+    # Failed files are excluded: a partially-written file could produce a
+    # misleading checksum and cause a good copy to be incorrectly deleted.
+    push @processed_files, { path => $filepath, provenance => $provenance }
+        if $opt_dedup && !$failed && defined $provenance && -e $filepath;
+}
+
+# ─── STEP 10: Deduplication phase ────────────────────────────────────────────
+#
+# Runs only when --dedup is given. Checksums every successfully processed file
+# and groups identical files by their SHA256 digest.
+#
+# Keeper selection within each duplicate group:
+#   Priority 1 — provenance rank (lower = richer metadata source):
+#     EXIF-only / QuickTime-only = 1  (embedded capture date found)
+#     Mixed-sources              = 2  (both EXIF and QT found — unusual)
+#     Fallback-only              = 3  (filesystem dates only)
+#     Unknown                   = 4
+#   Priority 2 — shortest filename (no .001/.002 suffix = arrived first)
+#   Priority 3 — alphabetical path (stable tiebreak)
+#
+# In dry-run mode: prints each group and what WOULD be deleted; no files removed.
+# In live mode:    deletes all but the keeper; logs each deletion with its checksum.
+# ─────────────────────────────────────────────────────────────────────────────
+if ($opt_dedup && @processed_files) {
+    print _cyan("\n" . ('─' x 50) . "\n");
+    print _cyan("🔍 Deduplication phase — checksumming ${\scalar @processed_files} files...\n");
+
+    # Provenance rank: lower number = richer metadata = prefer to keep
+    my %PROV_RANK = (
+        'EXIF-only'      => 1,
+        'QuickTime-only' => 1,
+        'Mixed-sources'  => 2,
+        'Fallback-only'  => 3,
+        'Unknown'        => 4,
+    );
+
+    # Build checksum → [file records] map.
+    # _sha256_file reads the full file; slow on large files / slow drives.
+    my %by_hash;
+    my $checked = 0;
+    for my $f (@processed_files) {
+        $checked++;
+        print "\r  Checksumming: $checked/${\scalar @processed_files}   "
+            if $checked % 100 == 0 || $checked == scalar @processed_files;
+        my $digest = _sha256_file($f->{path});
+        next unless defined $digest;
+        push @{$by_hash{$digest}}, $f;
+    }
+    print "\n" if @processed_files > 100;  # clear the \r progress line
+
+    # Process each group with more than one file
+    my $groups_found = 0;
+    for my $digest (sort keys %by_hash) {
+        my @group = @{$by_hash{$digest}};
+        next if @group < 2;
+        $groups_found++;
+        $C{DuplicateGroups}++;
+
+        # Sort group: best provenance first, then shortest name, then alpha
+        my @sorted = sort {
+            ($PROV_RANK{ $a->{provenance} } // 99) <=> ($PROV_RANK{ $b->{provenance} } // 99)
+            || length(basename($a->{path})) <=> length(basename($b->{path}))
+            || $a->{path} cmp $b->{path}
+        } @group;
+
+        my $keeper = shift @sorted;   # best candidate — always kept
+        my $short_digest = substr($digest, 0, 16) . '…';
+
+        print _cyan("\n  [DEDUP] Group (SHA256: $short_digest) — " . scalar(@sorted) . " duplicate(s)\n");
+        print _green("    KEEP   → " . basename($keeper->{path}) . "  [$keeper->{provenance}]\n");
+
+        for my $dup (@sorted) {
+            my $size = -s $dup->{path} // 0;
+            if ($opt_dry_run) {
+                print _yellow("    WOULD DELETE → " . basename($dup->{path})
+                    . "  [" . $dup->{provenance} . "]"
+                    . "  (" . _fmt_bytes($size) . ")\n");
+                # Count as-if so the dry-run summary is meaningful
+                $C{DuplicatesRemoved}++;
+                $C{BytesFreed} += $size;
+            } else {
+                if (unlink $dup->{path}) {
+                    print _red("    DELETED → " . basename($dup->{path})
+                        . "  (" . _fmt_bytes($size) . ")\n");
+                    $C{DuplicatesRemoved}++;
+                    $C{BytesFreed} += $size;
+                } else {
+                    print _red("    ❌ Delete failed → " . basename($dup->{path}) . ": $!\n");
+                    $C{Failed}++;
+                }
+            }
+        }
+    }
+
+    if ($groups_found == 0) {
+        print _green("  ✅ No duplicates found.\n");
+    }
 }
 
 # ─── Summary ─────────────────────────────────────────────────────────────────
@@ -500,6 +631,12 @@ printf "%-32s: %s\n", 'QuickTime-only sources',      $C{'QuickTime-only'};
 printf "%-32s: %s\n", 'Fallback-only sources',       $C{'Fallback-only'};
 printf "%-32s: %s\n", 'Mixed-source files',          $C{'Mixed-sources'};
 printf "%-32s: %s\n", 'Unknown provenance',          $C{Unknown};
+if ($opt_dedup) {
+    print  _cyan('─' x 50 . "\n");
+    printf "%-32s: %s\n", 'Duplicate groups found',      $C{DuplicateGroups};
+    printf "%-32s: %s\n", 'Duplicate files removed',     $C{DuplicatesRemoved};
+    printf "%-32s: %s\n", 'Space freed',                 _fmt_bytes($C{BytesFreed});
+}
 print  _cyan('═' x 50 . "\n");
 
 # ─── Subroutines ─────────────────────────────────────────────────────────────
@@ -619,6 +756,29 @@ sub _set_win32_birthtime {
     return $ok ? (1, '') : (0, "SetFileTime failed: $err");
 }
 
+# _sha256_file: compute SHA256 hex digest of a file's full content.
+# Used by the dedup phase to identify byte-for-byte identical files regardless
+# of filename or metadata. Returns undef if the file cannot be read.
+# Digest::SHA is a core Perl module (included since 5.10) — no install needed.
+sub _sha256_file {
+    my ($path) = @_;
+    open my $fh, '<:raw', $path or return undef;
+    my $sha = Digest::SHA->new(256);
+    $sha->addfile($fh);
+    close $fh;
+    return $sha->hexdigest;
+}
+
+# _fmt_bytes: format a byte count as a human-readable string.
+# Used in dedup output to show how much space was (or would be) freed.
+sub _fmt_bytes {
+    my ($b) = @_;
+    return sprintf('%.1f GB', $b / 1_073_741_824) if $b >= 1_073_741_824;
+    return sprintf('%.1f MB', $b / 1_048_576)     if $b >= 1_048_576;
+    return sprintf('%.1f KB', $b / 1_024)         if $b >= 1_024;
+    return "$b bytes";
+}
+
 # _print_line: emit a single colour-coded progress line.
 # Red = failure, Gray = skipped, Green = normal.
 sub _print_line {
@@ -638,7 +798,7 @@ inspect-media-audit.pl — Media signature check, timestamp repair, and rename
 
 =head1 SYNOPSIS
 
-  perl inspect-media-audit.pl --path /path/to/photos [--dry-run] [--recurse]
+  perl inspect-media-audit.pl --path /path/to/photos [--dry-run] [--recurse] [--dedup]
 
 =head1 DESCRIPTION
 
@@ -675,6 +835,12 @@ Preview all actions without writing or renaming any files.
 =item B<--recurse>
 
 Scan all subdirectories recursively.
+
+=item B<--dedup>
+
+After all renaming is complete, compute SHA256 checksums and remove duplicate files.
+Within each duplicate group the file with the richest provenance is kept; all others
+are deleted. Use with B<--dry-run> to preview what would be removed before applying.
 
 =back
 

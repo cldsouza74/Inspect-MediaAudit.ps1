@@ -6,7 +6,7 @@ Email: cldsouza74 [at] gmail [dot] com
 [![MIT License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Perl 5.16+](https://img.shields.io/badge/Perl-5.16%2B-blue.svg)](https://www.perl.org/)
 [![Requires Image::ExifTool](https://img.shields.io/badge/Requires-Image%3A%3AExifTool-green)](https://exiftool.org/)
-[![Version](https://img.shields.io/badge/version-1.0.0-blue.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-1.1.0-blue.svg)](CHANGELOG.md)
 
 # inspect-media-audit.pl
 
@@ -57,8 +57,9 @@ Reads capture dates from EXIF, QuickTime tags, and the filesystem. Picks the old
 - **Date sanity filtering:** rejects corrupt EXIF dates (before 1970 or in the future) before selecting the canonical timestamp
 - **Timestamp correction:** writes `DateTimeOriginal` for images missing it; sets `mtime` via `utime()`; sets NTFS `CreationTime` via Win32 API on Windows native Perl
 - **Automatic renaming:** renames files to `yyyyMMdd_HHmmss.ext`, with collision suffixing (`.001`, `.002`, …)
+- **Deduplication:** after renaming, computes SHA256 checksums and removes byte-identical duplicate files — keeps the copy with the richest metadata provenance
 - **Provenance tagging:** classifies metadata source per file — EXIF-only, QuickTime-only, Fallback-only, Mixed-sources, Unknown
-- **Dry run mode:** simulates all actions and reports what would change — no files written or renamed
+- **Dry run mode:** simulates all actions including deduplication and reports what would change — no files written, renamed, or deleted
 - **Comprehensive reporting:** colour-coded progress and a detailed summary on completion
 
 ---
@@ -69,6 +70,7 @@ Reads capture dates from EXIF, QuickTime tags, and the filesystem. Picks the old
 |---|---|
 | **Perl 5.16+** | Included on Linux/macOS; [download for Windows](https://strawberryperl.com/) |
 | **Image::ExifTool** | Required — see install instructions below |
+| **Digest::SHA** | Required for `--dedup` — core Perl module, included since Perl 5.10 |
 | **Win32::API** | Optional — Windows native only, for CreationTime support |
 
 ### Install Image::ExifTool
@@ -105,12 +107,18 @@ perl inspect-media-audit.pl --path /path/to/photos
 
 # Apply changes recursively through all subfolders:
 perl inspect-media-audit.pl --path /path/to/photos --recurse
+
+# Preview deduplication (see what would be deleted — nothing is removed):
+perl inspect-media-audit.pl --path /path/to/photos --recurse --dedup --dry-run
+
+# Apply changes AND remove duplicates in one pass:
+perl inspect-media-audit.pl --path /path/to/photos --recurse --dedup
 ```
 
 On WSL, Windows drives are mounted under `/mnt/`:
 
 ```bash
-perl inspect-media-audit.pl --path /mnt/e/Photos --dry-run --recurse
+perl inspect-media-audit.pl --path /mnt/e/Photos --dry-run --recurse --dedup
 ```
 
 ### Parameters
@@ -118,8 +126,9 @@ perl inspect-media-audit.pl --path /mnt/e/Photos --dry-run --recurse
 | Parameter | Required | Description |
 |---|---|---|
 | `--path` | Yes | Root folder containing media files |
-| `--dry-run` | No | Preview actions — no files written or renamed |
+| `--dry-run` | No | Preview actions — no files written, renamed, or deleted |
 | `--recurse` | No | Scan all subdirectories recursively |
+| `--dedup` | No | After renaming, find and remove duplicate files by SHA256 checksum |
 
 ### Supported Formats
 
@@ -146,6 +155,52 @@ For each media file the script:
 9. **Sets `CreationTime`** (NTFS birthtime) via Win32 API on Windows native Perl — see platform notes below.
 10. **Renames the file** to `yyyyMMdd_HHmmss.ext`. Collisions get a numeric suffix: `20231225_143022.001.jpg`.
 11. **Tags the provenance** of the chosen timestamp — EXIF-only, QuickTime-only, Fallback-only, Mixed-sources.
+12. **Deduplication** (`--dedup` only) — after all files are processed, computes SHA256 of every file and groups identical files by checksum. Within each group, keeps the file with the richest provenance; deletes the rest. See Deduplication section below.
+
+---
+
+## Deduplication
+
+Use `--dedup` to find and remove byte-identical duplicate files in one pass.
+
+**Why run it after renaming (not before)?**
+Before renaming, two copies of the same photo might have completely different names — `IMG_4892.jpg` and `photo_copy.jpg`. After renaming they both become `20231225_143022.jpg` and `20231225_143022.001.jpg` — the `.001` suffix makes the collision immediately visible. More importantly, checksums are compared on the normalized files so there's no risk of a filename mismatch causing a duplicate to be missed.
+
+**What gets kept:**
+
+Within each duplicate group the keeper is selected by:
+
+1. **Richest provenance** (best embedded metadata wins):
+
+| Provenance | Priority |
+|---|---|
+| EXIF-only / QuickTime-only | 1 — keep (has embedded capture date) |
+| Mixed-sources | 2 |
+| Fallback-only | 3 |
+| Unknown | 4 — least preferred |
+
+2. **Shortest filename** — no `.001` suffix means it arrived first in the rename loop
+3. **Alphabetical path** — stable tiebreak
+
+**Example output:**
+
+```
+  [DEDUP] Group (SHA256: a3f1c8e2d94b7f01…) — 2 duplicate(s)
+    KEEP   → 20231225_143022.jpg  [EXIF-only]
+    DELETED → 20231225_143022.001.jpg  (3.4 MB)
+```
+
+**Always preview first:**
+
+```bash
+# See exactly what would be deleted — nothing is removed
+perl inspect-media-audit.pl --path /mnt/e/Photos --recurse --dedup --dry-run
+
+# Apply when happy with the preview
+perl inspect-media-audit.pl --path /mnt/e/Photos --recurse --dedup
+```
+
+**Performance note:** checksumming reads every byte of every file. On a slow external drive or NAS, this adds time proportional to your total library size. On a fast local SSD it's negligible.
 
 ---
 
@@ -205,7 +260,10 @@ No files match the supported extensions. Check the folder path and that your fil
 Files have no embedded EXIF or QuickTime metadata — common with screenshots and downloaded images. The script still normalises filesystem timestamps correctly.
 
 **Many files getting `.001`, `.002` suffixes**
-Multiple files share the same timestamp to the second (e.g. burst photos). Expected behaviour.
+Multiple files share the same timestamp to the second (e.g. burst photos). Expected behaviour. Run `--dedup` afterwards to remove any that are byte-identical — burst photos will have different content and will not be deleted.
+
+**"No duplicates found" but I expected some**
+`--dedup` compares full file content by SHA256. Files must be byte-for-byte identical to be flagged — different resolution, compression, or metadata makes them distinct even if they look the same visually.
 
 ---
 
@@ -219,6 +277,7 @@ Multiple files share the same timestamp to the second (e.g. burst photos). Expec
 | Cross-platform | Windows only (NTFS timestamps) | Windows / Linux / macOS / WSL |
 | CreationTime | `FileInfo.CreationTime` (.NET) | `Win32::API` SetFileTime |
 | CreationTime on Linux | N/A | Skipped (OS limitation) |
+| Deduplication | No | Yes — `--dedup` (SHA256, keeps richest provenance) |
 
 Both scripts produce identical output and support the same `--dry-run` and `--recurse` flags.
 
