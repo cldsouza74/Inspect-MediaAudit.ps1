@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.3.1] - 2026-03-31
+
+### Added — sort-by-year.pl
+- **Runtime and throughput in summary**: `Runtime` and `Throughput (files/sec)` lines added
+  to the end-of-run summary. Errors line is now highlighted in red when non-zero, and a
+  trailing `⚠️  N file(s) could not be moved` reminder is printed when there are failures.
+- **`MANUAL.md`** — comprehensive user manual covering all three scripts: full parameter
+  reference, plain-language step-by-step workflow, output interpretation, and a Q&A
+  troubleshooting section.
+
+---
+
 ## [1.3.0] - 2026-03-31
 
 ### Added

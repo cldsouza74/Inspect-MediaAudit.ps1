@@ -1,5 +1,5 @@
 #!/usr/bin/env perl
-# sort-by-year.pl — v1.2.0
+# sort-by-year.pl — v1.3.0
 # Copyright © 2025-2026 Clive DSouza
 # SPDX-License-Identifier: MIT
 # Licensed under the MIT License — see LICENSE file in repo root
@@ -25,6 +25,7 @@ use File::Find   qw(find);
 use File::Basename qw(basename);
 use File::Spec;
 use File::Path   qw(make_path);
+use POSIX        qw(floor);
 
 # ─── ANSI colour helpers ─────────────────────────────────────────────────────
 sub _red    { "\e[31m$_[0]\e[0m" }
@@ -78,6 +79,8 @@ USAGE
 
 die "❌ --path is required\n"         unless defined $opt_path;
 die "❌ Path not found: $opt_path\n"  unless -d $opt_path;
+
+my $start_time = time();
 
 $opt_path = File::Spec->rel2abs($opt_path);
 
@@ -226,11 +229,30 @@ for my $filepath (@files) {
 }
 
 # ─── Summary ─────────────────────────────────────────────────────────────────
+my $elapsed   = time() - $start_time;
+my $hrs       = floor($elapsed / 3600);
+my $mins      = floor(($elapsed % 3600) / 60);
+my $secs      = $elapsed % 60;
+my $runtime   = $hrs  ? sprintf('%dh %02dm %02ds', $hrs, $mins, $secs)
+              : $mins ? sprintf('%dm %02ds', $mins, $secs)
+              :          sprintf('%ds', $secs);
+my $rate      = ($elapsed > 0 && $moved > 0)
+                ? sprintf('%.0f files/sec', $moved / $elapsed)
+                : 'N/A';
+
 print _cyan("\n" . ('═' x 50) . "\n");
 print _yellow("DRY RUN — no files were moved\n") if $opt_dry_run;
 printf "%-24s: %s\n", 'Files found',       $total;
 printf "%-24s: %s\n", 'Moved',             $moved;
 printf "%-24s: %s\n", 'Skipped',           $skipped;
 printf "%-24s: %s\n", 'Collision renames', $collisions;
-printf "%-24s: %s\n", 'Errors',            $errors;
+if ($errors > 0) {
+    printf "%-24s: %s\n", _red('Errors'), _red($errors);
+} else {
+    printf "%-24s: %s\n", 'Errors', $errors;
+}
+printf "%-24s: %s\n", 'Runtime',           $runtime;
+printf "%-24s: %s\n", 'Throughput',        $rate;
+print _red("⚠️  $errors file(s) could not be moved — check output above for details\n")
+    if $errors > 0;
 print _cyan('═' x 50 . "\n");

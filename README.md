@@ -54,6 +54,8 @@ After fixing metadata and renaming, the `--dedup` / `-Dedup` flag compares file 
 
 Run `media-audit.pl` first, then `sort-by-year.pl` to organise the results.
 
+**Full usage instructions:** [MANUAL.md](MANUAL.md)
+
 ---
 
 ## Two Scripts, One Job
