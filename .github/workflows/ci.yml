@@ -1,0 +1,49 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    name: Test on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        # windows-latest excluded: Perl fork() emulation on Windows does not
+        # support the parallel worker pattern used in media-audit.pl.
+        # Windows users should use media-audit.ps1 instead.
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Perl dependencies (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y libimage-exiftool-perl cpanminus ffmpeg
+          cpanm --notest Parallel::ForkManager
+
+      - name: Install Perl dependencies (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          brew install exiftool cpanminus ffmpeg
+          cpanm --notest Image::ExifTool Parallel::ForkManager
+
+      - name: Install test dependencies
+        run: cpanm --notest Test::More
+
+      - name: Verify tools
+        run: |
+          perl -v | head -2
+          exiftool -ver
+          perl -MImage::ExifTool -e 'print "ExifTool OK\n"'
+
+      - name: Run test suite
+        run: prove -lr t/
