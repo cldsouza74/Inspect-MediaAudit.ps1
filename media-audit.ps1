@@ -306,6 +306,7 @@ $filesToProcess | ForEach-Object -Parallel {
     $DryRun         = $using:DryRun
     $actionPrefix   = $using:actionPrefix
     $pFiles         = $using:processedFiles
+    $Dedup          = $using:Dedup
 
     # Atomic index for percentage display only — not used for any file operation.
     $index = [System.Threading.Interlocked]::Increment($using:CounterRef)
@@ -732,6 +733,7 @@ if ($Dedup) {
     $sha256Engine = [System.Security.Cryptography.SHA256]::Create()
     $checksums    = @{}   # hash → list of file objects
     $checked      = 0
+    try {
 
     foreach ($f in $candidates) {
         $checked++
@@ -752,7 +754,9 @@ if ($Dedup) {
             Write-Host "`n  ⚠️  Checksum failed for $(Split-Path $f.Path -Leaf): $($_.Exception.Message)" -ForegroundColor Yellow
         }
     }
-    $sha256Engine.Dispose()
+    } finally {
+        $sha256Engine.Dispose()
+    }
     Write-Host ""   # newline after progress
 
     # Provenance rank: lower = better metadata = keep this file.

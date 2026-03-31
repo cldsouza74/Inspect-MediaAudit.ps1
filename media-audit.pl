@@ -869,8 +869,9 @@ sub _audit_file {
     }
 
     # ── STEP 10: Progress output ──────────────────────────────────────────────
+    # Always print failures so they are never silently swallowed by the throttle.
     _print_line($pct, $idx, $total, \@actions, $filename, $failed, $job_num)
-        if $idx <= 10 || $idx % $report_every == 0;
+        if $failed || $idx <= 10 || $idx % $report_every == 0;
 
     return {
         failed     => $failed,

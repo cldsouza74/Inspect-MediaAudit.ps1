@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.2.1] - 2026-03-31
+
+### Fixed — media-audit.ps1
+- **`-Dedup` never ran** (critical): `$Dedup` was not imported via `$using:Dedup` in the
+  parallel scriptblock. Inside the runspace it evaluated to `$null`/`$false`, so
+  `$pFiles.Add()` never executed and `$processedFiles` was always empty. The dedup phase
+  ran but found 0 files, reported "No duplicates found" on every run regardless of actual
+  duplicates present.
+- **SHA256 engine leak on exception**: `$sha256Engine.Dispose()` was not in a `finally`
+  block — if any file threw during checksumming the engine handle was never released.
+  Wrapped checksum loop in `try/finally` to guarantee disposal.
+
+### Fixed — media-audit.pl
+- **Failures silently swallowed**: `_print_line` was throttled by `$report_every` with no
+  exception for failures. A failure on file #42 with `report_every=100` was counted in
+  `$C{Failed}` but never printed. Added `$failed ||` to the output condition so failures
+  always print immediately regardless of the reporting interval.
+
+---
+
 ## [1.2.0] - 2026-03-31 — media-audit.ps1
 
 ### Added
