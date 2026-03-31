@@ -825,14 +825,14 @@ $elapsed = New-TimeSpan $startTime $endTime
 # argument parser treats "`n", "+", and ('═' * 50) as three separate positional values,
 # printing a literal " + " between them rather than concatenating into one string.
 Write-Host ("`n" + ('═' * 50)) -ForegroundColor Cyan
-Write-Host ("{0,-30}: {1}" -f "Total files scanned", $totalCount)
-Write-Host ("{0,-30}: {1}" -f "Files matching extensions", $filteredCount)
-
+Write-Host ("{0,-30}: {1}" -f "Script",              "media-audit.ps1 v1.2.1")
+Write-Host ("{0,-30}: {1}" -f "Runtime",             $elapsed.ToString('hh\:mm\:ss'))
 if ($DryRun) {
     Write-Host "DRY RUN SUMMARY — No changes applied" -ForegroundColor Yellow
-} else {
-    Write-Host ("{0,-30}: {1}" -f "Processing time", $elapsed.ToString('hh\:mm\:ss'))
 }
+Write-Host ('─' * 50) -ForegroundColor Cyan
+Write-Host ("{0,-30}: {1}" -f "Total files scanned", $totalCount)
+Write-Host ("{0,-30}: {1}" -f "Files matching extensions", $filteredCount)
 
 Write-Host ("{0,-30}: {1}" -f "DateTaken metadata set",      $processedCount['DateTakenSet'])
 Write-Host ("{0,-30}: {1}" -f "DateCreated adjusted",        $processedCount['DateCreatedSet'])

@@ -241,7 +241,10 @@ my $rate      = ($elapsed > 0 && $moved > 0)
                 : 'N/A';
 
 print _cyan("\n" . ('═' x 50) . "\n");
+printf "%-24s: %s\n", 'Script',            'sort-by-year.pl v1.3.1';
+printf "%-24s: %s\n", 'Runtime',           $runtime;
 print _yellow("DRY RUN — no files were moved\n") if $opt_dry_run;
+print _cyan('─' x 50 . "\n");
 printf "%-24s: %s\n", 'Files found',       $total;
 printf "%-24s: %s\n", 'Moved',             $moved;
 printf "%-24s: %s\n", 'Skipped',           $skipped;
@@ -251,7 +254,6 @@ if ($errors > 0) {
 } else {
     printf "%-24s: %s\n", 'Errors', $errors;
 }
-printf "%-24s: %s\n", 'Runtime',           $runtime;
 printf "%-24s: %s\n", 'Throughput',        $rate;
 print _red("⚠️  $errors file(s) could not be moved — check output above for details\n")
     if $errors > 0;

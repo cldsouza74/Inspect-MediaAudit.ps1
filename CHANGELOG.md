@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.3.2] - 2026-03-31
+
+### Changed — all scripts
+- **Consistent summary header**: all three scripts now open their summary block with
+  `Script` (name + version) and `Runtime` as the first two lines, followed by a `─`
+  divider before the per-file counters. Runtime is now always printed in `media-audit.pl`
+  and `media-audit.ps1` regardless of `--dry-run` / `-DryRun`.
+
+---
+
 ## [1.3.1] - 2026-03-31
 
 ### Added — sort-by-year.pl

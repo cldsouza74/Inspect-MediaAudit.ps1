@@ -551,10 +551,12 @@ my $elapsed_str = sprintf('%02d:%02d:%02d',
     int($elapsed / 3600), int(($elapsed % 3600) / 60), $elapsed % 60);
 
 print _cyan("\n" . ('═' x 50) . "\n");
+printf "%-32s: %s\n", 'Script',                      'media-audit.pl v1.2.2';
+printf "%-32s: %s\n", 'Runtime',                     $elapsed_str;
+print  _yellow("DRY RUN — no changes applied\n") if $opt_dry_run;
+print  _cyan('─' x 50 . "\n");
 printf "%-32s: %s\n", 'Total files scanned',        $total_count;
 printf "%-32s: %s\n", 'Files matching extensions',  $filtered_count;
-print  _yellow("DRY RUN — no changes applied\n") if $opt_dry_run;
-printf "%-32s: %s\n", 'Processing time',             $elapsed_str unless $opt_dry_run;
 printf "%-32s: %s\n", 'DateTaken metadata set',      $C{DateTakenSet};
 printf "%-32s: %s\n", 'LastWriteTime adjusted',      $C{DateModifiedSet};
 printf "%-32s: %s\n", 'CreationTime adjusted',       $C{BirthTimeSet};
