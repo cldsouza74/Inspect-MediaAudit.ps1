@@ -379,6 +379,10 @@ for my $filepath (@files_to_process) {
             my (undef, $tmp_path) = tempfile(
                 'audit_XXXXXX', DIR => $dir, SUFFIX => '.tmp', UNLINK => 0
             );
+            # File::Temp creates an empty placeholder to reserve the name.
+            # ExifTool's WriteInfo refuses to overwrite an existing file, so
+            # we must remove the placeholder before passing the path to WriteInfo.
+            unlink $tmp_path;
             my $result = $et->WriteInfo($filepath, $tmp_path);
 
             if ($result == 1) {
