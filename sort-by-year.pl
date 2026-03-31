@@ -119,10 +119,15 @@ for my $filepath (sort @files) {
         next;
     }
 
+    # Build the destination directory and full target path.
+    # Year folder is created on demand — only when the first file for that
+    # year is actually moved (not in dry-run mode).
     my $target_dir = File::Spec->catdir($opt_path, $year);
     my $target     = File::Spec->catfile($target_dir, $fname);
 
-    # Collision handling: append .001/.002/... if target already exists
+    # Collision handling: if a file with the same name already exists in the
+    # target year folder, append a .001/.002/... suffix rather than overwriting.
+    # This mirrors the media-audit.pl rename collision logic.
     if (-e $target && !$opt_dry_run) {
         my ($stem, $ext) = $fname =~ /^(.+?)(\.[^.]+)$/;
         $stem //= $fname; $ext //= '';
@@ -143,10 +148,15 @@ for my $filepath (sort @files) {
 
     my $dest_fname = basename($target);
 
+    # Print source → destination for every file so the move is fully auditable.
+    # In dry-run mode the prefix is "Would move"; in live mode it is "Moved".
+    # Collision renames show the adjusted destination filename in parentheses.
     if ($opt_dry_run) {
-        print _green("Would move → $fname → $year/\n");
+        print _green("Would move  SRC: $filepath\n");
+        print _green("            DST: $target_dir/$dest_fname\n");
         $moved++;
     } else {
+        # Create the year subfolder if it does not yet exist.
         unless (-d $target_dir) {
             make_path($target_dir) or do {
                 print _red("❌ Cannot create $target_dir: $!\n");
@@ -156,11 +166,16 @@ for my $filepath (sort @files) {
         }
 
         if (rename $filepath, $target) {
-            my $note = $dest_fname ne $fname ? "  (→ $dest_fname)" : '';
-            print _green("Moved → $fname → $year/$note\n");
+            print _green("Moved       SRC: $filepath\n");
+            print _green("            DST: $target\n");
+            print _yellow("            ⚠️  Collision — renamed to: $dest_fname\n")
+                if $dest_fname ne $fname;
             $moved++;
         } else {
-            print _red("❌ Move failed: $fname → $year/ : $!\n");
+            print _red("❌ Move failed\n");
+            print _red("   SRC: $filepath\n");
+            print _red("   DST: $target\n");
+            print _red("   ERR: $!\n");
             $errors++;
         }
     }
