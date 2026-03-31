@@ -4,7 +4,7 @@
 **Date:** 2026-03-31
 **Author:** Clive DSouza
 **Status:** Active
-**Contact:** cldsouza@clivedsouza.com · linkedin.com/in/clive-dsouza-b8734212
+**Contact:** cldsouza74@gmail.com · linkedin.com/in/clive-dsouza-b8734212
 
 ---
 
