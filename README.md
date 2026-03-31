@@ -44,6 +44,18 @@ After fixing metadata and renaming, the `--dedup` / `-Dedup` flag compares file 
 
 ---
 
+## Scripts
+
+| Script | Purpose |
+|---|---|
+| [`media-audit.pl`](media-audit.pl) | Signature check, timestamp repair, rename, dedup — the main tool |
+| [`media-audit.ps1`](media-audit.ps1) | Same as above, PowerShell version for Windows |
+| [`sort-by-year.pl`](sort-by-year.pl) | Move files into `DEST/YEAR/` folders after auditing |
+
+Run `media-audit.pl` first, then `sort-by-year.pl` to organise the results.
+
+---
+
 ## Two Scripts, One Job
 
 The tool ships as two scripts that do the same job — pick the one that fits your environment:
