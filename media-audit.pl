@@ -451,18 +451,25 @@ if ($opt_dedup && @processed_files) {
     }
 
     my %by_hash;
-    my $checked = 0;
+    my $checked       = 0;
+    my $skipped_cksum = 0;
+    my $group_num     = 0;
     for my $size (keys %by_size) {
         my @same_size = @{$by_size{$size}};
         next if @same_size < 2;
+        $group_num++;
         for my $f (@same_size) {
             $checked++;
-            if ($files_to_checksum > 0 && ($checked % 100 == 0 || $checked == $files_to_checksum)) {
-                my $pct = sprintf('%5.1f', $checked / $files_to_checksum * 100);
-                print "\r  Checksumming: [$pct%] ($checked/$files_to_checksum)   ";
-            }
+            my $pct   = sprintf('%5.1f', $checked / $files_to_checksum * 100);
+            my $fname = basename($f->{path});
+            my $skip_str = $skipped_cksum > 0 ? "  [skipped: $skipped_cksum]" : '';
+            print "\r  Checksumming: [$pct%] ($checked/$files_to_checksum)"
+                . " — group $group_num/$size_groups → $fname$skip_str          ";
             my $digest = _sha256_file($f->{path});
-            next unless defined $digest;
+            if (!defined $digest) {
+                $skipped_cksum++;
+                next;
+            }
             push @{$by_hash{$digest}}, $f;
         }
     }
