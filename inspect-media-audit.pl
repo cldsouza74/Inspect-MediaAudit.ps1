@@ -273,6 +273,35 @@ if ($opt_jobs > 1 && $HAS_PARALLEL) {
     my @chunks = _split_chunks(\@files_to_process, $opt_jobs);
     my $pm = Parallel::ForkManager->new($opt_jobs);
 
+    # One temp file per worker — worker writes its local file count every 50
+    # files. Parent reads all of them every second via run_on_wait and prints
+    # a single global percentage line to STDERR (separate from per-file stdout).
+    # Files are cleaned up after wait_all_children completes.
+    my @progress_files;
+    for my $jn (1 .. scalar @chunks) {
+        my $pf = File::Spec->catfile(
+            File::Spec->tmpdir(), "audit_progress_${$}_${jn}"
+        );
+        push @progress_files, $pf;
+        open my $fh, '>', $pf or warn "Cannot create progress file $pf: $!\n";
+        close $fh;
+    }
+
+    $pm->run_on_wait(sub {
+        my $global_done = 0;
+        for my $pf (@progress_files) {
+            if (open my $fh, '<', $pf) {
+                my $n = <$fh>;
+                close $fh;
+                $global_done += ($n + 0) if defined $n;
+            }
+        }
+        my $pct = $filtered_count > 0
+            ? sprintf('%5.1f', $global_done / $filtered_count * 100)
+            : '100.0';
+        print STDERR "\r  Overall: [$pct%] ($global_done/$filtered_count)   ";
+    }, 1);
+
     $pm->run_on_finish(sub {
         my ($pid, $exit_code, $ident, $signal, $core_dump, $data) = @_;
         return unless defined $data;
@@ -308,6 +337,15 @@ if ($opt_jobs > 1 && $HAS_PARALLEL) {
 
             $local_C{$_} += $result->{counts}{$_} // 0 for keys %local_C;
 
+            # Update our progress temp file every 50 files so the parent can
+            # compute a global percentage. Overwrites the previous count.
+            if ($local_idx % 50 == 0 || $local_idx == $chunk_size) {
+                if (open my $pfh, '>', $progress_files[$job_num - 1]) {
+                    print $pfh $local_idx;
+                    close $pfh;
+                }
+            }
+
             push @local_pfiles, {
                 path       => $result->{final_path},
                 provenance => $result->{provenance},
@@ -320,6 +358,8 @@ if ($opt_jobs > 1 && $HAS_PARALLEL) {
         # Child exits here via ForkManager — no further code runs in the child
     }
     $pm->wait_all_children;
+    print STDERR "\n";   # end the \r progress line cleanly
+    unlink @progress_files;
 
 } else {
     # ── Sequential path ──────────────────────────────────────────────────────
