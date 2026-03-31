@@ -10,11 +10,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [1.3.0] - 2026-03-31
 
 ### Added
-- **`sort-by-year.pl`** — new companion script that sorts media files in-place into
+- **`sort-by-year.pl`** — companion script that sorts media files in-place into
   `PATH/YYYY/` subfolders. Takes a single `--path` argument — no separate src/dest
-  needed. Only processes files directly in `--path` (not subdirectories) so already-
-  sorted year folders are never re-processed. Supports `--dry-run`, collision handling
-  (`.001`/`.002` suffixes), year sanity check (1970–2100), and a full move summary.
+  needed. Supports `--dry-run`, `--recurse`, collision handling (`.001`/`.002` suffixes),
+  year sanity check (1970–2100), per-file `[XX.X%] SRC/DST` output, and a full summary.
+  Already-sorted year folders are automatically skipped in both modes — safe to re-run.
   Extracts year from canonical `YYYYMMDD_HHmmss.ext` filenames — no metadata reads.
 
 ---
