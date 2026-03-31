@@ -3,6 +3,8 @@
 [![CI](https://github.com/cldsouza74/media-audit/actions/workflows/ci.yml/badge.svg)](https://github.com/cldsouza74/media-audit/actions)
 [![MIT License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Version](https://img.shields.io/badge/version-1.4.0-blue.svg)](CHANGELOG.md)
+[![Installer Linux/macOS/WSL](https://img.shields.io/badge/Installer-Linux%20%7C%20macOS%20%7C%20WSL-brightgreen)](install.sh)
+[![Installer Windows](https://img.shields.io/badge/Installer-Windows-brightgreen)](Install.ps1)
 [![Requires ExifTool](https://img.shields.io/badge/Requires-ExifTool-green)](https://exiftool.org/)
 [![PowerShell 7+](https://img.shields.io/badge/PowerShell-7%2B-blue.svg)](https://github.com/PowerShell/PowerShell)
 [![Perl 5.16+](https://img.shields.io/badge/Perl-5.16%2B-blue.svg)](https://www.perl.org/)
