@@ -8,6 +8,8 @@ Email: cldsouza74 [at] gmail [dot] com
 [![Requires ExifTool](https://img.shields.io/badge/Requires-ExifTool-green)](https://exiftool.org/)
 [![Version](https://img.shields.io/badge/version-1.1.1-blue.svg)](CHANGELOG.md)
 
+> **Also available as a faster, cross-platform Perl script:** [inspect-media-audit.pl](inspect-media-audit.pl) — see [README-perl.md](README-perl.md) for details.
+
 # Inspect-MediaAudit.ps1
 
 A high-performance, parallelized PowerShell 7+ script for bulk auditing, repair, and normalization of media file metadata and filenames.
