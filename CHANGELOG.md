@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.2.2] - 2026-03-31
+
+### Fixed — media-audit.pl
+- **Dedup crash on I/O error**: `Digest::SHA->addfile()` throws on read errors (e.g. USB
+  drive hiccup or corrupt file) rather than returning an error code. Without an `eval`
+  wrapper, a single unreadable file crashed the entire dedup phase mid-run. Now catches
+  the exception, logs a `⚠️ Checksum skipped` warning for the affected file, and
+  continues checksumming the remaining files.
+
+---
+
 ## [1.2.1] - 2026-03-31
 
 ### Fixed — media-audit.ps1

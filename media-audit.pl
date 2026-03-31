@@ -1018,13 +1018,20 @@ sub _set_win32_birthtime {
 
 # _sha256_file: compute SHA256 hex digest of a file's full content.
 # Used by the dedup phase to identify byte-for-byte identical files.
-# Returns undef if the file cannot be read.
+# Returns undef if the file cannot be opened or if a read error occurs
+# mid-stream (e.g. I/O error on a USB drive). The eval wraps addfile()
+# because Digest::SHA throws on read errors rather than returning an error
+# code — without it a single unreadable file crashes the entire dedup phase.
 sub _sha256_file {
     my ($path) = @_;
     open my $fh, '<:raw', $path or return undef;
     my $sha = Digest::SHA->new(256);
-    $sha->addfile($fh);
+    my $ok  = eval { $sha->addfile($fh); 1 };
     close $fh;
+    if (!$ok) {
+        warn "  ⚠️  Checksum skipped (read error): " . basename($path) . " — $@\n";
+        return undef;
+    }
     return $sha->hexdigest;
 }
 
