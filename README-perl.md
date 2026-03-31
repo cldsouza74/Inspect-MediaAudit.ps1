@@ -8,9 +8,9 @@ Email: cldsouza74 [at] gmail [dot] com
 [![Requires Image::ExifTool](https://img.shields.io/badge/Requires-Image%3A%3AExifTool-green)](https://exiftool.org/)
 [![Version](https://img.shields.io/badge/version-1.2.0-blue.svg)](CHANGELOG.md)
 
-# inspect-media-audit.pl
+# media-audit.pl
 
-A fast, cross-platform Perl port of [Inspect-MediaAudit.ps1](README.md).
+A fast, cross-platform Perl port of [media-audit.ps1](README.md).
 
 Uses `Image::ExifTool` directly as a library — no subprocess spawning — making it significantly faster than the PowerShell version on large libraries.
 
@@ -112,28 +112,28 @@ If `Win32::API` is not installed the script still works fully — it just skips 
 
 ```bash
 # Always preview first — no files are changed with --dry-run:
-perl inspect-media-audit.pl --path /path/to/photos --dry-run --recurse
+perl media-audit.pl --path /path/to/photos --dry-run --recurse
 
 # Apply changes to top-level folder only:
-perl inspect-media-audit.pl --path /path/to/photos
+perl media-audit.pl --path /path/to/photos
 
 # Apply changes recursively through all subfolders:
-perl inspect-media-audit.pl --path /path/to/photos --recurse
+perl media-audit.pl --path /path/to/photos --recurse
 
 # Use 4 parallel workers (requires Parallel::ForkManager):
-perl inspect-media-audit.pl --path /path/to/photos --recurse --jobs 4
+perl media-audit.pl --path /path/to/photos --recurse --jobs 4
 
 # Preview deduplication (see what would be deleted — nothing is removed):
-perl inspect-media-audit.pl --path /path/to/photos --recurse --dedup --dry-run
+perl media-audit.pl --path /path/to/photos --recurse --dedup --dry-run
 
 # Apply changes AND remove duplicates in one pass:
-perl inspect-media-audit.pl --path /path/to/photos --recurse --dedup
+perl media-audit.pl --path /path/to/photos --recurse --dedup
 ```
 
 On WSL, Windows drives are mounted under `/mnt/`:
 
 ```bash
-perl inspect-media-audit.pl --path /mnt/e/Photos --dry-run --recurse --dedup
+perl media-audit.pl --path /mnt/e/Photos --dry-run --recurse --dedup
 ```
 
 ### Parameters
@@ -211,10 +211,10 @@ Within each duplicate group the keeper is selected by:
 
 ```bash
 # See exactly what would be deleted — nothing is removed
-perl inspect-media-audit.pl --path /mnt/e/Photos --recurse --dedup --dry-run
+perl media-audit.pl --path /mnt/e/Photos --recurse --dedup --dry-run
 
 # Apply when happy with the preview
-perl inspect-media-audit.pl --path /mnt/e/Photos --recurse --dedup
+perl media-audit.pl --path /mnt/e/Photos --recurse --dedup
 ```
 
 **Performance note:** the script groups files by size first — only files that share an identical byte-count are checksummed. On a typical photo library this avoids checksumming ~90% of files. Full content reads only happen when there are actual size collisions. On a slow NAS the I/O cost is still proportional to the total size of size-matched files, but this is far less than checksumming everything.

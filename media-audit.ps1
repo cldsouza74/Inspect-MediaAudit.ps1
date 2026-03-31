@@ -1,4 +1,4 @@
-# Inspect-MediaAudit.ps1
+# media-audit.ps1
 # Copyright © 2025-2026 Clive DSouza
 # SPDX-License-Identifier: MIT
 # Licensed under the MIT License — see LICENSE file in repo root
@@ -6,7 +6,7 @@
 #Requires -Version 7.0
 <#
 ╔══════════════════════════════════════════════════════════════════════════════════╗
-║                           Inspect-MediaAudit.ps1                                 ║
+║                              media-audit.ps1                                      ║
 ║        Signature Check + Metadata Repair + Timestamp Correction Tool             ║
 ╠══════════════════════════════════════════════════════════════════════════════════╣
 ║ FLOWCHART                                                                        ║
@@ -683,12 +683,12 @@ Write-Host ("{0,-30}: {1}" -f "Mixed-source files",          $processedCount['Mi
 Write-Host ("{0,-30}: {1}" -f "Unknown provenance",          $processedCount['Unknown'])
 Write-Host ('═' * 50) -ForegroundColor Cyan
 <#
-Inspect-MediaAudit.ps1
+media-audit.ps1
 ──────────────────────────────
 Performs header validation, timestamp extraction, metadata correction, and rename operations across media files.
 
 USAGE:
-    .\Inspect-MediaAudit.ps1 -Path "C:\MediaLibrary" [-DryRun] [-Recurse]
+    .\media-audit.ps1 -Path "C:\MediaLibrary" [-DryRun] [-Recurse]
 
 PARAMETERS:
     -Path      [Required] Root folder containing media files
@@ -728,5 +728,5 @@ NOTES:
     • Always back up your media before running bulk fixes on an important library
 
 EXAMPLE:
-    .\Inspect-MediaAudit.ps1 -Path "D:\Pictures" -DryRun -Recurse
+    .\media-audit.ps1 -Path "D:\Pictures" -DryRun -Recurse
 #>

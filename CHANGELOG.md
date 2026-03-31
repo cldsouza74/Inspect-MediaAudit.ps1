@@ -115,7 +115,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [1.0.0] - 2025-07-24
 ### Added
-- Initial release of `Inspect-MediaAudit.ps1`
+- Initial release of `media-audit.ps1`
 - Validates file signatures and corrects extensions
 - Extracts and repairs EXIF/QuickTime/NTFS timestamps
 - Renames files using canonical timestamp

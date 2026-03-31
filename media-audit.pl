@@ -1,9 +1,9 @@
 #!/usr/bin/env perl
-# inspect-media-audit.pl — v1.2.0
+# media-audit.pl — v1.2.0
 # Copyright © 2025-2026 Clive DSouza
 # SPDX-License-Identifier: MIT
 #
-# Perl port of Inspect-MediaAudit.ps1
+# Perl port of media-audit.ps1
 # Uses Image::ExifTool directly (no subprocess) for significantly faster processing.
 #
 # REQUIREMENTS
@@ -17,7 +17,7 @@
 #                           Not needed on Linux/WSL (birthtime is not settable there)
 #
 # USAGE
-#   perl inspect-media-audit.pl --path /path/to/photos [--dry-run] [--recurse] [--dedup] [--jobs N]
+#   perl media-audit.pl --path /path/to/photos [--dry-run] [--recurse] [--dedup] [--jobs N]
 #
 # PLATFORM NOTES
 #   Windows native Perl : full functionality including CreationTime correction
@@ -153,10 +153,10 @@ GetOptions(
 
 if ($opt_help) {
     print <<'USAGE';
-inspect-media-audit.pl — media signature check, timestamp repair, rename, and deduplication
+media-audit.pl — media signature check, timestamp repair, rename, and deduplication
 
 USAGE:
-  perl inspect-media-audit.pl --path <dir> [--dry-run] [--recurse] [--dedup] [--jobs N]
+  perl media-audit.pl --path <dir> [--dry-run] [--recurse] [--dedup] [--jobs N]
 
 OPTIONS:
   --path <dir>   Root folder containing media files (required)
@@ -1053,11 +1053,11 @@ __END__
 
 =head1 NAME
 
-inspect-media-audit.pl — Media signature check, timestamp repair, rename, and deduplication
+media-audit.pl — Media signature check, timestamp repair, rename, and deduplication
 
 =head1 SYNOPSIS
 
-  perl inspect-media-audit.pl --path /path/to/photos [--dry-run] [--recurse] [--dedup] [--jobs N]
+  perl media-audit.pl --path /path/to/photos [--dry-run] [--recurse] [--dedup] [--jobs N]
 
 =head1 DESCRIPTION
 

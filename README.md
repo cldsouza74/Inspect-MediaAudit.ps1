@@ -8,9 +8,9 @@ Email: cldsouza74 [at] gmail [dot] com
 [![Requires ExifTool](https://img.shields.io/badge/Requires-ExifTool-green)](https://exiftool.org/)
 [![Version](https://img.shields.io/badge/version-1.1.1-blue.svg)](CHANGELOG.md)
 
-> **Also available as a faster, cross-platform Perl script:** [inspect-media-audit.pl](inspect-media-audit.pl) — see [README-perl.md](README-perl.md) for details.
+> **Also available as a faster, cross-platform Perl script:** [media-audit.pl](media-audit.pl) — see [README-perl.md](README-perl.md) for details.
 
-# Inspect-MediaAudit.ps1
+# media-audit.ps1
 
 A high-performance, parallelized PowerShell 7+ script for bulk auditing, repair, and normalization of media file metadata and filenames.
 It validates media signatures, extracts/corrects timestamps, writes metadata, and renames files using a canonical timestamp.
@@ -73,7 +73,7 @@ See [CHANGELOG.md](CHANGELOG.md) for the complete history including v1.1.0 fixes
 
 ## When to Use This Script
 
-Use **Inspect-MediaAudit.ps1** when you need to:
+Use **media-audit.ps1** when you need to:
 
 - Audit and repair large libraries of photos and videos.
 - Correct file extensions that don't match the actual file content.
@@ -99,13 +99,13 @@ Ideal for photographers, archivists, and IT professionals managing large or mess
 
 ```powershell
 # Always preview first — no files are changed with -DryRun:
-.\Inspect-MediaAudit.ps1 -Path "D:\Pictures" -DryRun -Recurse
+.\media-audit.ps1 -Path "D:\Pictures" -DryRun -Recurse
 
 # Apply changes to top-level folder only:
-.\Inspect-MediaAudit.ps1 -Path "C:\MediaLibrary"
+.\media-audit.ps1 -Path "C:\MediaLibrary"
 
 # Apply changes recursively through all subfolders:
-.\Inspect-MediaAudit.ps1 -Path "D:\Photos" -Recurse
+.\media-audit.ps1 -Path "D:\Photos" -Recurse
 ```
 
 ### Parameters
