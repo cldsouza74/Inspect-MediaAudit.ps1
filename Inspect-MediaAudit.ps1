@@ -323,13 +323,14 @@ $filesToProcess | ForEach-Object -Parallel {
                 # ISO Base Media brand determines the specific container format.
                 # Trim() handles 'qt  ' (QuickTime brand padded with spaces).
                 $brand = [Text.Encoding]::ASCII.GetString($bytes[8..11]).Trim()
-                return switch ($brand) {
-                    'heic'  { '.heic' }
-                    'mif1'  { '.heic' }   # HEIF multi-image
-                    'mp41'  { '.mp4'  }
-                    'mp42'  { '.mp4'  }
-                    'qt'    { '.mov'  }   # QuickTime — 'qt  ' trimmed (brand is 4 bytes, space-padded)
-                    default { '.mp4'  }   # Treat unknown ISO brands as MP4
+                # switch is a statement in PowerShell, not an expression — return inside each case
+                switch ($brand) {
+                    'heic'  { return '.heic' }
+                    'mif1'  { return '.heic' }   # HEIF multi-image
+                    'mp41'  { return '.mp4'  }
+                    'mp42'  { return '.mp4'  }
+                    'qt'    { return '.mov'  }   # QuickTime — 'qt  ' trimmed (brand is 4 bytes, space-padded)
+                    default { return '.mp4'  }   # Treat unknown ISO brands as MP4
                 }
             }
             # WEBP: bytes 0-3 are 'RIFF', bytes 8-11 are 'WEBP'
