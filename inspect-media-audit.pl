@@ -457,53 +457,76 @@ if ($opt_dedup && @processed_files) {
         next if @same_size < 2;
         for my $f (@same_size) {
             $checked++;
-            print "\r  Checksumming: $checked/$files_to_checksum   "
-                if $files_to_checksum > 100
-                && ($checked % 100 == 0 || $checked == $files_to_checksum);
+            if ($files_to_checksum > 0 && ($checked % 100 == 0 || $checked == $files_to_checksum)) {
+                my $pct = sprintf('%5.1f', $checked / $files_to_checksum * 100);
+                print "\r  Checksumming: [$pct%] ($checked/$files_to_checksum)   ";
+            }
             my $digest = _sha256_file($f->{path});
             next unless defined $digest;
             push @{$by_hash{$digest}}, $f;
         }
     }
-    print "\n" if $files_to_checksum > 100;
+    print "\n" if $files_to_checksum > 0;
 
     # Phase 3: process duplicate groups (2+ files with identical SHA256)
-    my $groups_found = 0;
+    # Build a sorted list of all groups first so we know the total duplicate
+    # count upfront and can show meaningful progress during deletion.
+    my @dup_groups;
     for my $digest (sort keys %by_hash) {
         my @group = @{$by_hash{$digest}};
         next if @group < 2;
-        $groups_found++;
-        $C{DuplicateGroups}++;
-
-        # Sort: best provenance first, then shortest name, then alpha path
         my @sorted = sort {
             ($PROV_RANK{ $a->{provenance} } // 99) <=> ($PROV_RANK{ $b->{provenance} } // 99)
             || length(basename($a->{path})) <=> length(basename($b->{path}))
             || $a->{path} cmp $b->{path}
         } @group;
+        push @dup_groups, { digest => $digest, keeper => shift @sorted, dups => \@sorted };
+    }
 
-        my $keeper       = shift @sorted;
-        my $short_digest = substr($digest, 0, 16) . '…';
+    my $total_dups    = 0;
+    $total_dups += scalar @{$_->{dups}} for @dup_groups;
+    my $groups_found  = scalar @dup_groups;
+    my $dup_processed = 0;
 
-        print _cyan("\n  [DEDUP] Group (SHA256: $short_digest) — " . scalar(@sorted) . " duplicate(s)\n");
-        print _green("    KEEP   → " . basename($keeper->{path}) . "  [$keeper->{provenance}]\n");
+    if ($groups_found > 0) {
+        my $label = $opt_dry_run ? 'would delete' : 'to delete';
+        print _cyan("  Found $groups_found duplicate group(s) — "
+                  . "$total_dups file(s) $label\n");
+    }
 
-        for my $dup (@sorted) {
-            my $size = -s $dup->{path} // 0;
+    for my $grp (@dup_groups) {
+        $C{DuplicateGroups}++;
+        my $short_digest = substr($grp->{digest}, 0, 16) . '…';
+        my $keeper       = $grp->{keeper};
+
+        print _cyan("\n  [DEDUP] Group (SHA256: $short_digest) — "
+                  . scalar(@{$grp->{dups}}) . " duplicate(s)\n");
+        print _green("    KEEP   → " . basename($keeper->{path})
+                   . "  [$keeper->{provenance}]\n");
+
+        for my $dup (@{$grp->{dups}}) {
+            $dup_processed++;
+            my $size    = -s $dup->{path} // 0;
+            my $pct     = $total_dups > 0
+                        ? sprintf('%5.1f', $dup_processed / $total_dups * 100)
+                        : '100.0';
+            my $prog    = "[$pct%] ($dup_processed/$total_dups)";
+
             if ($opt_dry_run) {
-                print _yellow("    WOULD DELETE → " . basename($dup->{path})
+                print _yellow("    WOULD DELETE $prog → " . basename($dup->{path})
                     . "  [" . $dup->{provenance} . "]"
                     . "  (" . _fmt_bytes($size) . ")\n");
                 $C{DuplicatesRemoved}++;
                 $C{BytesFreed} += $size;
             } else {
                 if (unlink $dup->{path}) {
-                    print _red("    DELETED → " . basename($dup->{path})
+                    print _red("    DELETED $prog → " . basename($dup->{path})
                         . "  (" . _fmt_bytes($size) . ")\n");
                     $C{DuplicatesRemoved}++;
                     $C{BytesFreed} += $size;
                 } else {
-                    print _red("    ❌ Delete failed → " . basename($dup->{path}) . ": $!\n");
+                    print _red("    ❌ Delete failed $prog → "
+                        . basename($dup->{path}) . ": $!\n");
                     $C{Failed}++;
                 }
             }
