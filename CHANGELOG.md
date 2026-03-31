@@ -7,7 +7,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
-## [1.2.0] - 2026-03-30
+## [1.2.0] - 2026-03-31 — media-audit.ps1
+
+### Added
+- **`-Dedup` switch** — SHA256 size-bucketed deduplication phase after the main scan.
+  Files are grouped by byte-size first (free — no I/O), then SHA256-checksummed only
+  within same-size groups (~90% I/O reduction on typical libraries). Keeper is chosen
+  by provenance rank: EXIF-only > QuickTime-only > Mixed-sources > Fallback-only > Unknown.
+  Checksum and delete phases both show live percentage progress. Fully dry-run safe.
+- **`-fast` on all exiftool read calls** — stops metadata scanning after the first block,
+  giving a 2–3× speedup with no loss of capture-date accuracy.
+- **`$processedFiles` ConcurrentBag** — collects `{Path, Provenance}` per file across
+  all parallel runspaces so the dedup phase has accurate final paths after renames.
+- **`Format-Bytes` helper** — formats raw byte counts to human-readable KB/MB/GB for
+  the "Space freed" line in the dedup summary.
+- **`$finalPath` tracking** — file path is updated after every signature rename and
+  timestamp rename so the dedup phase always references the current on-disk name.
+- **Dedup stats in summary** — reports groups found, files removed (or would-delete in
+  dry-run), and space freed.
+
+### Fixed
+- **MAX_SANE extended to 5 years** — `(Get-Date).AddDays(1)` upper bound caused false
+  "⚠️ All dates outside sane range" warnings for valid files when the system clock lagged
+  or a camera clock was marginally ahead. Changed to `(Get-Date).AddYears(5)`.
+- **Missing-file skip** — files that disappear between enumeration and processing are now
+  detected via `Test-Path` before the magic-number read, counted as `Skipped` rather than
+  `Failed`, and logged with a visible `⚠️` warning.
+
+---
+
+## [1.2.0] - 2026-03-30 — media-audit.pl
 ### Added
 - **`--jobs N` parallel processing**: optional `Parallel::ForkManager` integration splits
   the file list into N chunks processed by N worker processes simultaneously. Falls back

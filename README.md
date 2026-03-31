@@ -6,7 +6,7 @@ Email: cldsouza74 [at] gmail [dot] com
 [![MIT License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![PowerShell 7+](https://img.shields.io/badge/PowerShell-7%2B-blue.svg)](https://github.com/PowerShell/PowerShell)
 [![Requires ExifTool](https://img.shields.io/badge/Requires-ExifTool-green)](https://exiftool.org/)
-[![Version](https://img.shields.io/badge/version-1.1.1-blue.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-1.2.0-blue.svg)](CHANGELOG.md)
 
 > **Also available as a faster, cross-platform Perl script:** [media-audit.pl](media-audit.pl) — see [README-perl.md](README-perl.md) for details.
 
@@ -36,38 +36,34 @@ Every photo and video carries hidden date information ("when was this taken?"). 
 
 ---
 
-## What's New in v1.1.1
+## What's New in v1.2.0
 
-Eleven hardening fixes making the script robust against real-world failure conditions:
+Four new capabilities bringing the PowerShell script to full feature parity with `media-audit.pl`:
 
-- **ExifTool pre-flight check** — script now exits immediately with a clear message if `exiftool` is not on PATH, instead of silently failing on every file.
-- **Empty folder guard** — exits cleanly with a warning if no supported files are found, preventing a divide-by-zero crash.
-- **File stream handle leak fixed** — stream disposal moved into a `finally` block so file handles are always released, even on read errors.
-- **QuickTime MOV detection fixed** — `.Trim()` was applied to the ISO brand before comparing against `'qt  '` (untrimed), so QuickTime files were always detected as MP4. Fixed.
-- **ExifTool exit code now checked** — write failures were previously counted as success. `$LASTEXITCODE` is now verified after every exiftool write.
-- **Error handler crash fixed** — the outer catch block referenced `$fileInfo` before it was assigned; now falls back to the raw file path safely.
-- **`ConvertTo-LongPath` wildcard bug fixed** — `-like '\\?\\*'` used `?` as a wildcard (matching any character), not a literal `?`. Changed to `.StartsWith()`.
-- **Timestamp assignment protected** — `CreationTime` and `LastWriteTime` writes are now wrapped in try/catch; previously threw unhandled exceptions on read-only files.
-- **Rename suffix exhaustion now logged** — when all 999 collision suffixes were exhausted, the file was silently skipped. Now logged as a failure.
-- **Mutex properly disposed** — the OS-level Mutex is now released after the parallel block completes.
-- **Date sanity bounds** — corrupt EXIF dates (year `0001`, `9999`, etc.) are now excluded from timestamp selection. Dates before 1970 or after tomorrow are rejected with a visible warning.
+- **`-Dedup` — SHA256 size-bucketed deduplication**: groups files by byte-size first (free — no I/O), then SHA256-checksums only same-size groups. On typical photo libraries where fewer than 10% of files share a size, this avoids ~90% of checksum I/O. The keeper is chosen by provenance rank (EXIF > QuickTime > Mixed > Fallback > Unknown). Dry-run safe.
+- **`-fast` on all exiftool reads**: stops metadata scanning after the first block, giving a 2–3× speedup with no loss of capture-date accuracy.
+- **MAX_SANE extended to 5 years**: the previous 1-day future bound caused false "⚠️ All dates outside sane range" warnings on valid files when the system clock lagged or a camera clock was marginally ahead. Now accepts dates up to 5 years in the future.
+- **Missing-file skip**: files that disappear between enumeration and processing (e.g. renamed by a previous interrupted run) are now detected before the magic-number read, logged as `⚠️ File no longer exists — skipping`, and counted as `Skipped` instead of `Failed`.
 
-See [CHANGELOG.md](CHANGELOG.md) for the complete history including v1.1.0 fixes.
+See [CHANGELOG.md](CHANGELOG.md) for the complete history including v1.1.1 and v1.1.0 fixes.
 
 ---
 
 ## Features
 
 - **ExifTool pre-flight:** Verifies `exiftool` is on PATH before processing any files — fails fast with a clear message rather than silently failing thousands of files.
+- **Fast reads:** `-fast` flag on all `exiftool` read calls stops scanning after the first metadata block — 2–3× faster on large libraries.
 - **Signature validation:** Checks file extensions against actual content via magic-number analysis (JPEG, PNG, GIF, TIFF, MP4, MOV, HEIC, WebP).
+- **Missing-file skip:** Files deleted between enumeration and processing are counted as `Skipped`, not `Failed`.
 - **Metadata extraction:** Reads capture dates from EXIF, XMP, QuickTime, and NTFS filesystem timestamps.
-- **Date sanity filtering:** Rejects corrupt EXIF dates (before 1970 or in the future) before selecting the canonical timestamp.
+- **Date sanity filtering:** Rejects corrupt EXIF dates (before 1970 or more than 5 years in the future) before selecting the canonical timestamp.
 - **Timestamp correction:** Sets `DateTimeOriginal`, `CreationTime`, and `LastWriteTime` to the oldest valid timestamp found.
 - **Automatic renaming:** Renames files to `yyyyMMdd_HHmmss.ext` based on canonical timestamp, with race-safe collision suffixing (`.001`, `.002`, …).
 - **Provenance tagging:** Classifies metadata source per file — EXIF-only, QuickTime-only, Fallback-only, Mixed-sources, Unknown.
-- **Dry run mode:** Simulates all actions and reports what would change — no files are written or renamed.
+- **Dry run mode:** Simulates all actions and reports what would change — no files are written, renamed, or deleted.
 - **Parallel processing:** Uses all logical CPU cores via `ForEach-Object -Parallel` with thread-safe counters and proper resource cleanup.
-- **Comprehensive reporting:** Color-coded progress output and a detailed summary on completion.
+- **Size-bucketed deduplication (`-Dedup`):** Groups by byte-size first, checksums only same-size groups (~90% I/O reduction), deletes duplicates keeping the file with the best provenance. Progress shown for both checksum and delete phases.
+- **Comprehensive reporting:** Color-coded progress output and a detailed summary on completion including dedup stats.
 
 ---
 
@@ -106,6 +102,12 @@ Ideal for photographers, archivists, and IT professionals managing large or mess
 
 # Apply changes recursively through all subfolders:
 .\media-audit.ps1 -Path "D:\Photos" -Recurse
+
+# Preview deduplication (shows what would be deleted, nothing removed):
+.\media-audit.ps1 -Path "D:\Photos" -DryRun -Recurse -Dedup
+
+# Full run with deduplication:
+.\media-audit.ps1 -Path "D:\Photos" -Recurse -Dedup
 ```
 
 ### Parameters
@@ -113,8 +115,9 @@ Ideal for photographers, archivists, and IT professionals managing large or mess
 | Parameter  | Required | Description |
 |------------|----------|-------------|
 | `-Path`    | Yes | Root folder containing media files |
-| `-DryRun`  | No  | Preview actions — no files written or renamed |
+| `-DryRun`  | No  | Preview actions — no files written, renamed, or deleted |
 | `-Recurse` | No  | Scan all subdirectories recursively |
+| `-Dedup`   | No  | Run SHA256 deduplication phase after the main scan |
 
 ### Supported Formats
 
@@ -134,12 +137,18 @@ For each media file the script:
 2. **Reads the first 12 bytes** and compares the magic number against known format signatures to detect extension mismatches.
 3. **Renames the file** if the extension doesn't match the actual format (e.g. a `.jpg` file that is actually a PNG).
 4. **Extracts timestamps** from EXIF/XMP (`DateTimeOriginal`) for images, or `QuickTime:CreateDate` for videos, with NTFS filesystem dates as fallback.
-5. **Filters out implausible dates** — any date before 1970 or after tomorrow is rejected as likely corrupt, with a warning in the output.
+5. **Filters out implausible dates** — any date before 1970 or more than 5 years in the future is rejected as likely corrupt, with a warning in the output.
 6. **Selects the oldest** of all remaining valid dates as the canonical capture timestamp.
 7. **Writes `DateTimeOriginal`** back into the file via exiftool (images without an existing timestamp only). Exit code is verified.
 8. **Corrects `CreationTime`** and `LastWriteTime` on the filesystem to match.
 9. **Renames the file** to `yyyyMMdd_HHmmss.ext` (e.g. `20231225_143022.jpg`). Collisions get a numeric suffix: `20231225_143022.001.jpg`.
 10. **Tags the provenance** of the chosen timestamp (EXIF-only, QuickTime-only, Fallback-only, Mixed-sources).
+
+If `-Dedup` is specified, a second phase runs after all files are processed:
+
+11. **Groups files by byte-size** (free — no disk I/O). Only groups of 2+ identically-sized files are candidates.
+12. **SHA256-checksums** only the candidate files (typically ~10% of the library).
+13. **Deletes duplicates** within each identical-checksum group, keeping the file with the highest provenance rank. Progress is shown for both the checksum and delete steps.
 
 ---
 

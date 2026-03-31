@@ -1,6 +1,11 @@
 # PowerShell editor backup files
 *.ps1~
 *.psm1~
+*.ps1.bak
+
+# Perl editor backup files
+*.pl~
+*.pl.bak
 
 # General scratch/temp files
 *.tmp
@@ -10,13 +15,32 @@
 
 # ExifTool backup files (created when -overwrite_original is not used)
 *_original
-*.ps1.bak
+
+# Perl CPAN build artifacts
+Makefile
+Makefile.old
+blib/
+pm_to_blib
+*.bs
+MYMETA.*
+
+# Perl local::lib / carton vendored deps
+local/
+vendor/bundle/
+
+# Progress temp files written by media-audit.pl parallel workers
+audit_progress_*
 
 # macOS
 .DS_Store
+.AppleDouble
+.LSOverride
 
 # Windows
 Thumbs.db
 desktop.ini
 $RECYCLE.BIN/
 *.lnk
+
+# Linux
+*~
