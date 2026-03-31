@@ -7,6 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.2.0] - 2026-03-30
+### Added
+- **`--jobs N` parallel processing**: optional `Parallel::ForkManager` integration splits
+  the file list into N chunks processed by N worker processes simultaneously. Falls back
+  to single-threaded mode with a one-time warning if the module is not installed.
+  Progress lines are prefixed with `[J1]`, `[J2]`, etc. in parallel mode.
+- **`FastScan => 1` ExifTool option**: stops metadata scanning after the first block,
+  giving a 2-3× speedup with no loss of capture-date accuracy (DateTimeOriginal is
+  always in the primary metadata block).
+- **Size-bucketed deduplication**: `--dedup` now groups files by byte-count first (free
+  `stat` call) and SHA256-checksums only size-matched groups. On typical photo libraries
+  where < 10% of files share a size, this avoids ~90% of checksum I/O.
+
+### Fixed
+- **`MAX_SANE` too tight**: the 1-day upper bound (`time() + 86_400`) caused false
+  "⚠️ All dates outside sane range" warnings for valid 2024/2025 files when the
+  system clock lagged slightly or camera clocks were marginally ahead. Extended to
+  5 years (`time() + 5 * 365 * 86_400`).
+- **"Cannot open: No such file or directory" counted as failure**: files that no longer
+  exist at their collected path (e.g. renamed by a previous interrupted run) were
+  logged as `❌ Read error` and incremented the failure counter. They are now detected
+  before the magic-number read, logged as `⚠️ File no longer exists — skipping`, and
+  counted as `Skipped` instead of `Failed`.
+
+---
+
 ## [1.1.1] - 2026-03-30
 ### Fixed
 - **Pre-flight exiftool check**: script now exits immediately with a clear message if
