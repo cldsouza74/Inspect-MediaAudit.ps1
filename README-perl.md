@@ -10,7 +10,7 @@ Email: cldsouza74 [at] gmail [dot] com
 
 # media-audit.pl
 
-A fast, cross-platform Perl port of [media-audit.ps1](README.md).
+A fast, cross-platform Perl script for bulk media repair. Part of the [media-audit](README.md) project — see the main README for a full side-by-side comparison with the PowerShell version.
 
 Uses `Image::ExifTool` directly as a library — no subprocess spawning — making it significantly faster than the PowerShell version on large libraries.
 
@@ -294,16 +294,18 @@ Multiple files share the same timestamp to the second (e.g. burst photos). Expec
 
 | Feature | PowerShell (.ps1) | Perl (.pl) |
 |---|---|---|
-| Metadata read/write | `exiftool` subprocess per file | `Image::ExifTool` direct API (FastScan) |
-| Speed (10k files) | Hours | Minutes |
-| Parallel processing | Yes (compensates for subprocess cost) | Optional — `--jobs N` via `Parallel::ForkManager` |
-| Cross-platform | Windows only (NTFS timestamps) | Windows / Linux / macOS / WSL |
+| Metadata read/write | `exiftool` subprocess per file | `Image::ExifTool` direct API — no subprocess |
+| Speed (10k files) | ~30–60 min | ~5–10 min |
+| FastScan | `-fast` flag on all reads | `FastScan => 1` in ExifTool API |
+| Parallel processing | Yes — all cores via `ForEach-Object -Parallel` | Optional — `--jobs N` via `Parallel::ForkManager` |
+| Cross-platform | Windows only | Windows / Linux / macOS / WSL |
+| Deduplication | `-Dedup` — size-bucketed SHA256 | `--dedup` — size-bucketed SHA256 |
+| Missing-file skip | Yes | Yes |
 | CreationTime | `FileInfo.CreationTime` (.NET) | `Win32::API` SetFileTime |
 | CreationTime on Linux | N/A | Skipped (OS limitation) |
-| Deduplication | No | Yes — `--dedup` (size-bucketed SHA256, keeps richest provenance) |
-| Interrupted-run handling | N/A | Missing files silently skipped (not counted as failures) |
+| External binary needed | `exiftool` on PATH | None — `Image::ExifTool` is pure Perl |
 
-Both scripts produce identical output and support the same `--dry-run` and `--recurse` flags.
+Both scripts produce equivalent output and support the same dry-run, recurse, and dedup workflow.
 
 ---
 
