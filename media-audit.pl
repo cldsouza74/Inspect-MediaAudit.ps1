@@ -127,6 +127,8 @@ if ($^O eq 'MSWin32') {
     }
 }
 
+my $LOG_FH;
+
 # ─── ANSI colour helpers ─────────────────────────────────────────────────────
 # Windows cmd.exe does not process ANSI sequences by default; pwsh and Windows
 # Terminal do. On Linux/WSL they always work.
@@ -135,6 +137,8 @@ sub _green  { "\e[32m$_[0]\e[0m" }
 sub _yellow { "\e[33m$_[0]\e[0m" }
 sub _cyan   { "\e[36m$_[0]\e[0m" }
 sub _gray   { "\e[90m$_[0]\e[0m" }
+sub _strip_ansi { (my $s = $_[0]) =~ s/\e\[[0-9;]*m//g; $s }
+sub _log        { print { $LOG_FH } _strip_ansi($_[0]) if $LOG_FH }
 
 # ─── Supported extensions ────────────────────────────────────────────────────
 my %VALID_EXT = map { $_ => 1 } qw(
@@ -147,7 +151,7 @@ my %VALID_EXT = map { $_ => 1 } qw(
 my %VIDEO_EXT = map { $_ => 1 } qw(.mov .mp4 .avi .mkv .wmv .qt .mpg);
 
 # ─── Argument parsing ────────────────────────────────────────────────────────
-my ($opt_path, $opt_dry_run, $opt_recurse, $opt_dedup, $opt_help);
+my ($opt_path, $opt_dry_run, $opt_recurse, $opt_dedup, $opt_help, $opt_log);
 my $opt_jobs = 1;
 GetOptions(
     'path=s'   => \$opt_path,
@@ -156,7 +160,8 @@ GetOptions(
     'dedup'    => \$opt_dedup,
     'jobs=i'   => \$opt_jobs,
     'help'     => \$opt_help,
-) or die "Usage: $0 --path <dir> [--dry-run] [--recurse] [--dedup] [--jobs N]\n";
+    'log:s'    => \$opt_log,
+) or die "Usage: $0 --path <dir> [--dry-run] [--recurse] [--dedup] [--jobs N] [--log FILE]\n";
 
 if ($opt_help) {
     print <<'USAGE';
@@ -172,6 +177,8 @@ OPTIONS:
   --dedup        After processing, find and remove duplicate files by SHA256 checksum
   --jobs N       Number of parallel worker processes (default: 1 / single-threaded)
                  Requires Parallel::ForkManager: cpan Parallel::ForkManager
+  --log [FILE]   Write all failures and the final summary to FILE.
+                 Omit FILE to auto-name: media-audit-YYYYMMDD-HHMMSS.log (saved next to script)
 
 SUPPORTED FORMATS:
   Images : .jpg .jpeg .png .gif .bmp .tif .tiff .heic .webp .jfif
@@ -190,6 +197,14 @@ USAGE
 $opt_path //= $ARGV[0];
 die "Usage: $0 --path <dir> [--dry-run] [--recurse]\n" unless defined $opt_path;
 die "❌ Path not found: $opt_path\n" unless -d $opt_path;
+
+if (defined $opt_log) {
+    $opt_log = File::Spec->catfile($Bin, strftime('media-audit-%Y%m%d-%H%M%S.log', localtime))
+        if $opt_log eq '';
+    open($LOG_FH, '>', $opt_log) or die "Cannot open log '$opt_log': $!\n";
+    $LOG_FH->autoflush(1);
+    print "📋 Logging to: $opt_log\n";
+}
 
 # Clamp jobs to a valid range; warn and fall back if module is absent
 $opt_jobs = 1 if $opt_jobs < 1;
@@ -585,6 +600,38 @@ if ($opt_dedup) {
     printf "%-32s: %s\n", 'Space freed',                 _fmt_bytes($C{BytesFreed});
 }
 print  _cyan('═' x 50 . "\n");
+
+if ($LOG_FH) {
+    print { $LOG_FH } "\n" . ('═' x 50) . "\n";
+    printf { $LOG_FH } "%-32s: %s\n", 'Script',                     "media-audit.pl v$VERSION";
+    printf { $LOG_FH } "%-32s: %s\n", 'Runtime',                    $elapsed_str;
+    print  { $LOG_FH } "DRY RUN — no changes applied\n" if $opt_dry_run;
+    print  { $LOG_FH } ('─' x 50) . "\n";
+    printf { $LOG_FH } "%-32s: %s\n", 'Total files scanned',        $total_count;
+    printf { $LOG_FH } "%-32s: %s\n", 'Files matching extensions',  $filtered_count;
+    printf { $LOG_FH } "%-32s: %s\n", 'DateTaken metadata set',     $C{DateTakenSet};
+    printf { $LOG_FH } "%-32s: %s\n", 'LastWriteTime adjusted',     $C{DateModifiedSet};
+    printf { $LOG_FH } "%-32s: %s\n", 'CreationTime adjusted',      $C{BirthTimeSet};
+    printf { $LOG_FH } "%-32s: %s\n", 'Files renamed by timestamp', $C{Renamed};
+    printf { $LOG_FH } "%-32s: %s\n", 'Timestamp rename w/ suffix', $C{WithCounter};
+    printf { $LOG_FH } "%-32s: %s\n", 'Signature mismatches',       $C{SignatureMismatch};
+    printf { $LOG_FH } "%-32s: %s\n", 'Signature-based renames',    $C{SignatureRenamed};
+    printf { $LOG_FH } "%-32s: %s\n", 'Files skipped',              $C{Skipped};
+    printf { $LOG_FH } "%-32s: %s\n", 'Failures',                   $C{Failed};
+    printf { $LOG_FH } "%-32s: %s\n", 'EXIF-only sources',          $C{'EXIF-only'};
+    printf { $LOG_FH } "%-32s: %s\n", 'QuickTime-only sources',     $C{'QuickTime-only'};
+    printf { $LOG_FH } "%-32s: %s\n", 'Fallback-only sources',      $C{'Fallback-only'};
+    printf { $LOG_FH } "%-32s: %s\n", 'Mixed-source files',         $C{'Mixed-sources'};
+    printf { $LOG_FH } "%-32s: %s\n", 'Unknown provenance',         $C{Unknown};
+    if ($opt_dedup) {
+        print  { $LOG_FH } ('─' x 50) . "\n";
+        printf { $LOG_FH } "%-32s: %s\n", 'Duplicate groups found',    $C{DuplicateGroups};
+        printf { $LOG_FH } "%-32s: %s\n", 'Duplicate files removed',   $C{DuplicatesRemoved};
+        printf { $LOG_FH } "%-32s: %s\n", 'Space freed',               _fmt_bytes($C{BytesFreed});
+    }
+    print  { $LOG_FH } ('═' x 50) . "\n";
+    close $LOG_FH;
+}
 
 # ─── Subroutines ─────────────────────────────────────────────────────────────
 
@@ -1068,7 +1115,7 @@ sub _print_line {
     my $prefix  = ($job_num // 0) > 0 ? "[J$job_num] " : '';
     my $line    = "${prefix}[$pct%] ($idx/$total) " . join('; ', @$actions) . " - $fname";
     my $skipped = grep { /no longer exists|Skipped/ } @$actions;
-    if    ($failed)  { print _red($line)   . "\n" }
+    if    ($failed)  { print _red($line)   . "\n"; _log($line . "\n") }
     elsif ($skipped) { print _gray($line)  . "\n" }
     else             { print _green($line) . "\n" }
 }

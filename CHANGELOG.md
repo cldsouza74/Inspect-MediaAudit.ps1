@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.5.0] - 2026-04-01
+
+### Added
+- **`--log [FILE]`** — write all failure lines and the final summary to a log file.
+  Passing `--log` without a path auto-generates `media-audit-YYYYMMDD-HHMMSS.log`
+  next to the script. Passing `--log /path/to/file` uses that path explicitly.
+  Log output is plain text (no ANSI colour codes). The log path is printed to the
+  screen at startup so you always know where to find it.
+
+---
+
 ## [1.4.0] - 2026-03-31
 
 ### Added

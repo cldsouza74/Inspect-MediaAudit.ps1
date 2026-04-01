@@ -6,7 +6,7 @@
 
 use strict;
 use warnings;
-use Test::More tests => 5;
+use Test::More tests => 9;
 use File::Temp  qw(tempdir);
 use File::Copy  qw(copy);
 use File::Spec;
@@ -97,4 +97,40 @@ sub tmpdir { tempdir(CLEANUP => 1) }
 
     like $out, qr/media-audit\.pl v\Q$expected\E/,
         "TC-23: summary shows version $expected from VERSION file";
+}
+
+# ── TC-24: --log FILE writes failures and summary to file ─────────────────────
+
+{
+    my $dir     = tmpdir();
+    my $log     = File::Spec->catfile($dir, 'test.log');
+    my $bad     = "$dir/unreadable.jpg";
+    copy("$FIXTURES/valid_jpeg.jpg", "$dir/valid_jpeg.jpg");
+    copy("$FIXTURES/valid_jpeg.jpg", $bad);
+    chmod 0000, $bad;
+
+    run_audit($dir, "--log $log");
+
+    ok -f $log, 'TC-24: --log FILE creates the log file';
+
+    open my $fh, '<', $log or die "Cannot read log: $!";
+    my $content = do { local $/; <$fh> };
+    close $fh;
+
+    like $content, qr/Failures/, 'TC-24: log contains summary section';
+    like $content, qr/❌/,       'TC-24: log contains failure line';
+
+    chmod 0644, $bad;
+}
+
+# ── TC-25: --log without FILE auto-generates a timestamped filename ───────────
+
+{
+    my $dir = tmpdir();
+    copy("$FIXTURES/valid_jpeg.jpg", "$dir/valid_jpeg.jpg");
+
+    my $out = run_audit($dir, '--log');
+
+    like $out, qr/Logging to:.*media-audit-\d{8}-\d{6}\.log/,
+        'TC-25: --log without FILE prints auto-generated log path';
 }

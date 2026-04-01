@@ -133,6 +133,7 @@ perl media-audit.pl --path <dir> [OPTIONS]
 | `--recurse` | No | Process all subfolders recursively |
 | `--dedup` | No | After renaming, find and delete duplicate files by content (SHA256) |
 | `--jobs N` | No | Run N parallel worker processes; requires `Parallel::ForkManager` |
+| `--log [FILE]` | No | Write all failures and the final summary to FILE. Omit FILE to auto-name `media-audit-YYYYMMDD-HHMMSS.log` next to the script |
 
 ### Examples
 
@@ -145,6 +146,12 @@ perl media-audit.pl --path /mnt/e/Photos --recurse --jobs 4
 
 # Apply changes + remove exact duplicates
 perl media-audit.pl --path /mnt/e/Photos --recurse --jobs 4 --dedup
+
+# Save a log file (auto-named next to the script)
+perl media-audit.pl --path /mnt/e/Photos --recurse --jobs 4 --log
+
+# Save a log file to a specific path
+perl media-audit.pl --path /mnt/e/Photos --recurse --jobs 4 --log /tmp/audit.log
 
 # Top-level folder only (no subfolders)
 perl media-audit.pl --path /mnt/e/Photos/unsorted
