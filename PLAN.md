@@ -840,4 +840,4 @@ jobs:
 
 ---
 
-*This document is the authoritative plan for the media-audit project. Update it when decisions change — do not let it drift from reality. Last updated: 2026-03-31.*
+*This document is the authoritative plan for the media-audit project. Update it when decisions change — do not let it drift from reality. Last updated: 2026-04-01.*

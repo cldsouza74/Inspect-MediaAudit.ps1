@@ -145,6 +145,7 @@ perl media-audit.pl --path /mnt/e/Photos --dry-run --recurse --dedup
 | `--recurse` | No | Scan all subdirectories recursively |
 | `--dedup` | No | After renaming, find and remove duplicate files by SHA256 checksum |
 | `--jobs N` | No | Number of parallel worker processes (default: 1); requires `Parallel::ForkManager` |
+| `--log [FILE]` | No | Write all failures and the final summary to FILE. Omit FILE to auto-name `media-audit-YYYYMMDD-HHMMSS.log` next to the script |
 
 ### Supported Formats
 

@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/cldsouza74/media-audit/actions/workflows/ci.yml/badge.svg)](https://github.com/cldsouza74/media-audit/actions)
 [![MIT License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-1.4.0-blue.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-1.5.0-blue.svg)](CHANGELOG.md)
 [![Installer Linux/macOS/WSL](https://img.shields.io/badge/Installer-Linux%20%7C%20macOS%20%7C%20WSL-brightgreen)](install.sh)
 [![Installer Windows](https://img.shields.io/badge/Installer-Windows-brightgreen)](Install.ps1)
 [![Requires ExifTool](https://img.shields.io/badge/Requires-ExifTool-green)](https://exiftool.org/)
@@ -174,9 +174,12 @@ The final summary shows totals for every counter — files processed, metadata w
 
 See [CHANGELOG.md](CHANGELOG.md) for the full version history.
 
+**v1.5.0 highlights:**
+- `--log [FILE]` flag — write all failures and the final summary to a log file; omit FILE to auto-name with timestamp
+
 **v1.4.0 highlights:**
 - One-command installers — `./install.sh` (Linux/macOS/WSL) and `.\Install.ps1` (Windows)
-- 41-test suite covering signature detection, date extraction, rename, dedup, sort, and failure handling
+- 45-test suite covering signature detection, date extraction, rename, dedup, sort, and failure handling
 - GitHub Actions CI — tests run on every push across Ubuntu and macOS
 - Single `VERSION` file — all scripts read version from one place, no more drift
 - `cpanfile` — `cpanm --installdeps .` installs all dependencies in one step
